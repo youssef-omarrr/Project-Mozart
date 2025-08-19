@@ -1,5 +1,5 @@
 # Project Mozart 🎶
-
+![alt text](imgs/mozart.jpg)
 > This project is currently in its early design phase. Core components are being mapped out, with more details and progress updates coming soon :)
 
 ---
