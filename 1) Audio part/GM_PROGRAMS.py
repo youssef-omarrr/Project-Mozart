@@ -143,3 +143,98 @@ GM_PROGRAMS = {
     126: "Applause", 
     127: "Gunshot",
 }
+
+from music21 import instrument
+# -----------------------------
+# Enhanced instrument mapping
+# -----------------------------
+INSTRUMENT_MAPPING = {
+    # Keyboards
+    "piano": instrument.Piano,
+    "fortepiano": instrument.Piano,
+    "harpsichord": instrument.Harpsichord,
+    "celesta": instrument.Celesta,
+    "organ": instrument.Organ,
+    "hammond": instrument.ElectricOrgan,
+    "accordion": instrument.Accordion,
+    
+    # Strings
+    "violin": instrument.Violin,
+    "viola": instrument.Viola,
+    "cello": instrument.Violoncello,
+    "contrabass": instrument.Contrabass,
+    "bass": instrument.ElectricBass,
+    "guitar": instrument.ElectricGuitar,
+    "harp": instrument.Harp,
+    "strings": instrument.StringInstrument,
+    
+    # Brass
+    "trumpet": instrument.Trumpet,
+    "trombone": instrument.Trombone,
+    "horn": instrument.Horn,
+    "french horn": instrument.Horn,
+    "tuba": instrument.Tuba,
+    "brass": instrument.BrassInstrument,
+    
+    # Woodwinds
+    "flute": instrument.Flute,
+    "piccolo": instrument.Piccolo,
+    "oboe": instrument.Oboe,
+    "clarinet": instrument.Clarinet,
+    "bassoon": instrument.Bassoon,
+    "saxophone": instrument.Saxophone,
+    "alto sax": instrument.AltoSaxophone,
+    "tenor sax": instrument.TenorSaxophone,
+    "soprano sax": instrument.SopranoSaxophone,
+    "baritone sax": instrument.BaritoneSaxophone,
+    
+    # Percussion
+    "drums": instrument.Percussion,
+    "timpani": instrument.Timpani,
+    "xylophone": instrument.Xylophone,
+    "marimba": instrument.Marimba,
+    "vibraphone": instrument.Vibraphone,
+    
+    # Voices
+    "choir": instrument.Choir,
+    "soprano": instrument.Soprano,
+    "alto": instrument.Alto,
+    "tenor": instrument.Tenor,
+    "bass voice": instrument.Bass,
+    
+    # Other
+    "banjo": instrument.Banjo,
+    "mandolin": instrument.Mandolin,
+    "sitar": instrument.Sitar,
+}
+
+# MIDI Program number mapping
+MIDI_PROGRAM_MAPPING = {
+    0: instrument.Piano,           # Acoustic Grand Piano
+    1: instrument.Piano,           # Bright Acoustic Piano
+    4: instrument.ElectricPiano,   # Electric Piano 1
+    6: instrument.Harpsichord,     # Harpsichord
+    16: instrument.ElectricOrgan,  # Hammond Organ
+    19: instrument.Organ,          # Church Organ
+    24: instrument.Guitar,         # Acoustic Guitar (nylon)
+    25: instrument.ElectricGuitar, # Acoustic Guitar (steel)
+    32: instrument.ElectricBass,   # Acoustic Bass
+    40: instrument.Violin,         # Violin
+    41: instrument.Viola,          # Viola
+    42: instrument.Violoncello,    # Cello
+    43: instrument.Contrabass,     # Contrabass
+    46: instrument.Harp,           # Harp
+    56: instrument.Trumpet,        # Trumpet
+    57: instrument.Trombone,       # Trombone
+    58: instrument.Tuba,           # Tuba
+    60: instrument.Horn,           # French Horn
+    64: instrument.SopranoSaxophone, # Soprano Sax
+    65: instrument.AltoSaxophone,    # Alto Sax
+    66: instrument.TenorSaxophone,   # Tenor Sax
+    67: instrument.BaritoneSaxophone, # Baritone Sax
+    68: instrument.Oboe,           # Oboe
+    70: instrument.Bassoon,        # Bassoon
+    71: instrument.Clarinet,       # Clarinet
+    72: instrument.Piccolo,        # Piccolo
+    73: instrument.Flute,          # Flute
+}
