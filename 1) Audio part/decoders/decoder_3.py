@@ -6,7 +6,7 @@ import json
 from fractions import Fraction
 import os
 from GM_PROGRAMS import *
-from midi2audio import FluidSynth
+from pydub import AudioSegment 
 import subprocess
 
 import os
@@ -202,6 +202,7 @@ def decode_to_audio(data_or_path, soundfont_path = "soundfonts/AegeanSymphonicOr
     # Load data
     if isinstance(data_or_path, str):
         print(f"Loading data from: {data_or_path}")
+        print("-"*55)
         with open(data_or_path, "r") as file:
             data = json.load(file)
     else:
@@ -211,28 +212,41 @@ def decode_to_audio(data_or_path, soundfont_path = "soundfonts/AegeanSymphonicOr
     for track_name, tokens in data.items():
         print(f"  - {track_name}: {len(tokens)} tokens")
 
+    print("-"*55)
+    
+    
     # Convert dictionary to score and get program numbers
     score, program_map = dict_to_score(data, bpm)
 
     # Write score to temporary MIDI
     tmp_midi = os.path.join(output_dir, "temp.mid")
     score.write('midi', fp=tmp_midi)
+    
 
     # Render MIDI to WAV with fluidsynth (no live playback, file only)
     try:
         cmd = [
             r"C:\tools\fluidsynth\bin\fluidsynth.exe",
-            "-a", "file",           # <--- force file output only (no speakers)
-            "-F", output_wav,       # write directly to file
-            "-ni", soundfont_path,  # load your soundfont
-            tmp_midi,               # the midi file
-            "-r", "44100"           # sample rate
+            "-a", "file",           # write to file only
+            "-F", output_wav,       # output wav
+            "-ni", soundfont_path,  # load soundfont
+            "-r", "44100",          # sample rate
+            "-g", "2.0",            # gain boost
+            tmp_midi                # MIDI file (last!)
         ]
         subprocess.run(cmd, check=True)
+        
+        # Normalize the audio afterwards
+        sound = AudioSegment.from_wav(output_wav)
+        normalized = sound.normalize()
+        normalized.export(output_wav, format="wav")
 
+        print("-"*55)
         print("Instrument program mapping used:")
         for track, prog in program_map.items():
             print(f"  {track}: Program {prog}")
+            
+        print("-"*55)
 
         print(f"Successfully decoded and saved audio as {output_wav} with bpm = {bpm}")
         return output_wav

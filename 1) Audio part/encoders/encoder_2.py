@@ -157,6 +157,7 @@ def midi_to_dict(midi_path):
     """
     
     print(f"Processing MIDI file: {os.path.basename(midi_path)}")
+    print("-"*55)
     score = converter.parse(midi_path)  # Parse MIDI file into a music21 score
     
     # Capture score title if present
