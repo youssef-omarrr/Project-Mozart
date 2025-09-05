@@ -178,19 +178,19 @@ def get_instrument_name(part, idx=None, score_title=None, used_names=None):
     return final_name
 
 # -----------------------------
-# BPM extraction from MIDI
+# BPM extraction from MIDI - FIXED VERSION
 # -----------------------------
-def get_bpm_from_midi(midi_path , default=120):
+def get_bpm_from_midi(midi_path, default=120):
     """
     Try to extract a sensible BPM from a MIDI file.
     Strategy:
-        1. Use mido 'set_tempo' messages.
+        1. Use mido 'set_tempo' messages, prioritizing the most common tempo.
         2. Fall back to music21's tempo marks if available.
         3. Sanity-check the result (30 <= BPM <= 240).
         4. Default to 120 BPM if no valid tempo found.
     """
     # -----------------------------
-    # Step 1: Try mido tempo events
+    # Step 1: Try mido tempo events with improved logic
     # -----------------------------
     try:
         mid = MidiFile(midi_path)
@@ -199,11 +199,16 @@ def get_bpm_from_midi(midi_path , default=120):
             for msg in track:
                 if msg.type == "set_tempo":
                     bpm = 60_000_000 / msg.tempo  # µs per beat → BPM
-                    bpms.append(bpm)
+                    if 30 <= bpm <= 240:  # Only collect reasonable BPM values
+                        bpms.append(bpm)
+        
         if bpms:
-            avg_bpm = sum(bpms) / len(bpms)
-            if 30 <= avg_bpm <= 240:
-                return round(avg_bpm, 2)
+            # Use the most common BPM instead of average
+            from collections import Counter
+            bpm_counter = Counter(bpms)
+            most_common_bpm = bpm_counter.most_common(1)[0][0]
+            return round(most_common_bpm, 2)
+        
     except Exception as e:
         print(f"Warning: mido could not parse tempo: {e}")
         
@@ -214,35 +219,78 @@ def get_bpm_from_midi(midi_path , default=120):
         score = converter.parse(midi_path)
         # Use .flatten() instead of .flat (avoids deprecation warning)
         marks = list(score.flatten().getElementsByClass(tempo.MetronomeMark))
-        bpms = [m.number for m in marks if m.number is not None]
+        bpms = [m.number for m in marks if m.number is not None and 30 <= m.number <= 240]
         if bpms:
-            avg_bpm = sum(bpms) / len(bpms)
-            if 30 <= avg_bpm <= 240:  # sanity check
-                return round(avg_bpm, 2)
+            # Use the most common BPM instead of average
+            from collections import Counter
+            bpm_counter = Counter(bpms)
+            most_common_bpm = bpm_counter.most_common(1)[0][0]
+            return round(most_common_bpm, 2)
     except Exception as e:
         print(f"Warning: music21 could not parse tempo: {e}")
 
-    
+    # -----------------------------
+    # Step 3: Calculate BPM from duration if available
+    # -----------------------------
+    try:
+        mid = MidiFile(midi_path)
+        duration_seconds = mid.length
+        score = converter.parse(midi_path)
+        duration_beats = score.duration.quarterLength
+        
+        if duration_seconds > 0 and duration_beats > 0:
+            calculated_bpm = (duration_beats / duration_seconds) * 60
+            if 30 <= calculated_bpm <= 240:
+                return round(calculated_bpm, 2)
+    except Exception as e:
+        print(f"Warning: Could not calculate BPM from duration: {e}")
 
     # -----------------------------
-    # Step 3: Fallback
+    # Step 4: Fallback
     # -----------------------------
+    print(f"Warning: Using default BPM of {default}")
     return default
 
 # -----------------------------
-# Get midi file duration
+# Get accurate duration calculation - FIXED
 # -----------------------------
-def get_midi_duration_seconds(midi_path):
+def get_accurate_duration(score, midi_path):
     """
-    Compute actual playback duration in seconds based on MIDI ticks and tempo events.
-    This matches what playback/fluidsynth will produce.
+    Get accurate duration in beats and seconds for a MIDI file.
     """
     try:
+        # Get duration in seconds from MIDI file
         mid = MidiFile(midi_path)
-        return mid.length
+        duration_seconds = mid.length
+        
+        # Calculate duration in beats by finding the maximum offset + duration
+        duration_beats = 0
+        for part in score.parts:
+            # Get all notes, chords, and rests
+            for el in part.recurse().notesAndRests:
+                end_time = el.offset + el.duration.quarterLength
+                if end_time > duration_beats:
+                    duration_beats = end_time
+        
+        # If we still have a ridiculously low beat count, try a different approach
+        if duration_beats < 10 and duration_seconds > 60:  # Less than 10 beats but more than 60 seconds            
+            # Alternative approach: count all notes and estimate beats
+            total_notes = 0
+            for part in score.parts:
+                total_notes += len(list(part.recurse().notesAndRests))
+            
+            # Estimate based on average note density (this is a rough estimate)
+            if total_notes > 0:
+                # Assuming average note duration of 0.5 beats (eighth notes)
+                duration_beats = total_notes * 0.5
+                # print(f"Estimated {duration_beats} beats based on {total_notes} notes")
+        
+        return duration_beats, round(duration_seconds/60, 2)
+    
     except Exception as e:
-        print(f"Warning: could not compute MIDI duration: {e}")
-        return None
+        print(f"Warning: Could not calculate accurate duration: {e}")
+        # Fallback: use score duration
+        return score.duration.quarterLength, None
 
 # -----------------------------
 # Enhanced MIDI to dict conversion
@@ -359,15 +407,13 @@ def encode(midi_path, output_dir="../dataset/text", print_details = True):
         data = midi_to_dict(midi_path, print_details)
         bpm = get_bpm_from_midi(midi_path)
         
-        # Get duration - FIXED: Calculate duration properly
-        duration_beats = score.duration.quarterLength
-        duration_seconds = get_midi_duration_seconds(midi_path)
+        # Get accurate duration - FIXED
+        duration_beats, duration_minutes = get_accurate_duration(score, midi_path)
         
         # If MIDI duration calculation failed, estimate from beats and BPM
-        if duration_seconds is None:
-            duration_seconds = duration_beats * (60 / bpm)
+        if duration_minutes is None:
+            duration_minutes = duration_beats / bpm
             print(f"Warning: Using estimated duration from BPM and beats")
-
 
 
         # Wrap into one dictionary
@@ -375,19 +421,20 @@ def encode(midi_path, output_dir="../dataset/text", print_details = True):
             "name": name,
             "bpm": bpm,
             "duration_beats": round(duration_beats, 2),
-            "duration_seconds": round(duration_seconds, 2),
+            "duration_minutes": round(duration_minutes, 2),
             "tracks": data   # put all instrument parts under "tracks"
         }
         
+        
         # Debug print
-        print(f"\nDuration: {duration_beats:.2f} beats, {duration_seconds:.2f} seconds")
+        print(f"Estimated length: {duration_minutes} minutes")
 
 
         # Save the text file
         save_dict_to_txt(full_data, output_path)
         
         print("="*55)
-        print(f"\033[92mData saved to {output_path}, with bpm = {bpm}\033[0m")
+        print(f"\033[92mData saved to {output_path} \nwith bpm = {bpm}\033[0m")
         print("="*55)
         print('\n')
         

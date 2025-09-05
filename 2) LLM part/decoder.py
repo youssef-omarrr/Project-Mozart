@@ -275,7 +275,7 @@ def decode_to_audio(data_or_path, soundfont_path = "../soundfonts/AegeanSymphoni
                 print(f"  {track}: Program {prog}")
 
         print("="*55)
-        print(f"\033[92mSuccessfully decoded and saved audio as {output_wav} with bpm = {bpm}\033[0m")
+        print(f"\033[92mSuccessfully decoded and saved audio as {output_wav} \nwith bpm = {bpm}\033[0m")
         print("="*55)
         print('\n')
         
