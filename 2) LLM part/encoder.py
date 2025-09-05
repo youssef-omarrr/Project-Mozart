@@ -7,7 +7,7 @@ from GM_PROGRAMS import (get_instrument_name as gm_program_name, GM_NAME_MAP,
                         get_program_for_instrument, get_best_program_for_instrument_name,
                         name_file)
 
-from mido import MidiFile, tick2second, merge_tracks
+from mido import MidiFile
 import json
 import os
 
@@ -373,7 +373,7 @@ def save_dict_to_txt(data, out_path="output.txt"):
 # -----------------------------
 # Main function
 # -----------------------------
-def encode(midi_path, output_dir="../dataset/text", print_details = True):
+def encode(midi_path, output_dir="../dataset/text", print_details = True, numerate = True):
     """
     Convert MIDI to token dict and save to file.
     Automatically names the output using the song name + incremented suffix.
@@ -399,7 +399,8 @@ def encode(midi_path, output_dir="../dataset/text", print_details = True):
     # Use helper to generate unique file path
     output_path = name_file(output_dir=output_dir, 
                             safe_name=safe_name, 
-                            extension=".txt")
+                            extension=".txt",
+                            numerate= numerate)
 
     # Process MIDI
     try:

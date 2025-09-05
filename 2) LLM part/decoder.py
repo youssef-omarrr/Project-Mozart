@@ -182,7 +182,7 @@ def dict_to_score(data, bpm=120, print_details=True):
 # Decode tokens to Audio (FluidSynth via midi2audio)
 # -----------------------------
 def decode_to_audio(data_or_path, soundfont_path = "../soundfonts/AegeanSymphonicOrchestra-SND.sf2",
-                    output_dir="../example_outputs/decoder_testing", bpm=None, print_details = True):
+                    output_dir="../example_outputs/decoder_testing", bpm=None, print_details = True, numerate = True):
     """
     Decode a token dictionary or JSON file into audio (WAV).
     If JSON includes "bpm" and "tracks", use them automatically.
@@ -229,7 +229,8 @@ def decode_to_audio(data_or_path, soundfont_path = "../soundfonts/AegeanSymphoni
     # Use helper to generate unique file path
     output_wav = name_file (output_dir= output_dir,
                         safe_name= safe_name,
-                        extension= '.wav')
+                        extension= '.wav',
+                        numerate = numerate)
     if print_details:
         print(f"Input data contains {len(tracks)} instruments:")
         for track_name, tokens in tracks.items():

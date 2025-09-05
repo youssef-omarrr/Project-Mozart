@@ -21,7 +21,7 @@ Notes:
 # ================================================================== #
 
 import os
-def name_file(output_dir, safe_name, extension):
+def name_file(output_dir, safe_name, extension, numerate = True):
     """
     Generate a unique filename in output_dir using safe_name and extension.
     Ensures incrementing suffix (_1, _2, ...) if duplicates exist.
@@ -41,15 +41,19 @@ def name_file(output_dir, safe_name, extension):
     os.makedirs(output_dir, exist_ok=True)
 
     # Find existing files with this pattern
-    existing_files = [f for f in os.listdir(output_dir) if f.startswith(safe_name) and f.endswith(extension)]
-    numbers = []
-    for f in existing_files:
-        parts = f[:-len(extension)].split("_")  # remove extension safely
-        if len(parts) > 1 and parts[-1].isdigit():
-            numbers.append(int(parts[-1]))
-    next_number = max(numbers, default=0) + 1
+    if numerate:
+        existing_files = [f for f in os.listdir(output_dir) if f.startswith(safe_name) and f.endswith(extension)]
+        numbers = []
+        for f in existing_files:
+            parts = f[:-len(extension)].split("_")  # remove extension safely
+            if len(parts) > 1 and parts[-1].isdigit():
+                numbers.append(int(parts[-1]))
+        next_number = max(numbers, default=0) + 1
 
-    return os.path.join(output_dir, f"{safe_name}_{next_number}{extension}")
+        return os.path.join(output_dir, f"{safe_name}_{next_number}{extension}")
+    
+    else:
+        return os.path.join(output_dir, f"{safe_name}{extension}")
 
 
 from typing import Optional, Tuple, Dict
