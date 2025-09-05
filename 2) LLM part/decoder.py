@@ -126,7 +126,7 @@ def choose_instrument_for_name(track_name, used_programs=None):
 # -----------------------------
 # Dict -> music21 Score (decoder)
 # -----------------------------
-def dict_to_score(data, bpm=120):
+def dict_to_score(data, bpm=120, print_details=True):
     """
     Convert {track_name: [tokens]} to a music21 Score.
     Enhanced version with better instrument diversity and no program conflicts.
@@ -141,7 +141,8 @@ def dict_to_score(data, bpm=120):
     used_programs = set()  # Track used programs to ensure diversity
 
     for track_name, tokens in data.items():
-        print(f"Creating part for: {track_name}")
+        if print_details:
+            print(f"Creating part for: {track_name}")
         
         part = stream.Part()
         part.id = track_name
@@ -150,7 +151,8 @@ def dict_to_score(data, bpm=120):
         inst_obj, prog_num = choose_instrument_for_name(track_name, used_programs)
         used_programs.add(prog_num)  # Mark this program as used
         
-        print(f"  -> Using instrument: {inst_obj.__class__.__name__} (Program {prog_num}: {get_instrument_name(prog_num)})")
+        if print_details:
+            print(f"  -> Using instrument: {inst_obj.__class__.__name__} (Program {prog_num}: {get_instrument_name(prog_num)})")
         
         # Insert the music21 instrument object into the part
         part.insert(0, inst_obj)
@@ -166,7 +168,8 @@ def dict_to_score(data, bpm=120):
             except Exception as e:
                 print(f"  Warning: Could not process token '{tok}': {e}")
         
-        print(f"  -> Added {note_count} notes/rests")
+        if print_details:
+            print(f"  -> Added {note_count} notes/rests")
         score.append(part)
 
         # Save program number for FluidSynth
@@ -199,10 +202,17 @@ def decode_to_audio(data_or_path, soundfont_path = "../soundfonts/AegeanSymphoni
         
     # Detect new format with metadata
     if "tracks" in data:
-        bpm = data.get("bpm", bpm if bpm else 120) # Defaults to 120 if not added
+        bpm = data.get("bpm", bpm if bpm else 120)
         name = data.get("name", "Generated_Composition")
+        
+        duration_beats = data.get("duration_beats")
+        duration_seconds = data.get("duration_seconds")
+        
         tracks = data["tracks"]
+        
         print(f"Song name: {name}, BPM: {bpm}")
+        if duration_beats and duration_seconds:
+            print(f"Estimated duration: {duration_beats} beats (~{duration_seconds:.2f} seconds)")
         print("-"*55)
         
     else:
@@ -228,7 +238,7 @@ def decode_to_audio(data_or_path, soundfont_path = "../soundfonts/AegeanSymphoni
         print("-"*55)
     
     # Convert dictionary to score and get program numbers
-    score, program_map = dict_to_score(tracks, bpm)
+    score, program_map = dict_to_score(tracks, bpm, print_details)
 
     # Write score to temporary MIDI
     tmp_midi = os.path.join(output_dir, "temp.mid")
@@ -257,9 +267,9 @@ def decode_to_audio(data_or_path, soundfont_path = "../soundfonts/AegeanSymphoni
         normalized = sound.normalize()
         normalized.export(output_wav, format="wav")
 
-        print("-"*55)
         
         if print_details:
+            print("-"*55)
             print("Instrument program mapping used:")
             for track, prog in program_map.items():
                 print(f"  {track}: Program {prog}")

@@ -7,7 +7,7 @@ from GM_PROGRAMS import (get_instrument_name as gm_program_name, GM_NAME_MAP,
                         get_program_for_instrument, get_best_program_for_instrument_name,
                         name_file)
 
-from mido import MidiFile
+from mido import MidiFile, tick2second, merge_tracks
 import json
 import os
 
@@ -230,6 +230,21 @@ def get_bpm_from_midi(midi_path , default=120):
     return default
 
 # -----------------------------
+# Get midi file duration
+# -----------------------------
+def get_midi_duration_seconds(midi_path):
+    """
+    Compute actual playback duration in seconds based on MIDI ticks and tempo events.
+    This matches what playback/fluidsynth will produce.
+    """
+    try:
+        mid = MidiFile(midi_path)
+        return mid.length
+    except Exception as e:
+        print(f"Warning: could not compute MIDI duration: {e}")
+        return None
+
+# -----------------------------
 # Enhanced MIDI to dict conversion
 # -----------------------------
 def midi_to_dict(midi_path, print_details = True):
@@ -343,13 +358,30 @@ def encode(midi_path, output_dir="../dataset/text", print_details = True):
         # Get data and bpm
         data = midi_to_dict(midi_path, print_details)
         bpm = get_bpm_from_midi(midi_path)
+        
+        # Get duration - FIXED: Calculate duration properly
+        duration_beats = score.duration.quarterLength
+        duration_seconds = get_midi_duration_seconds(midi_path)
+        
+        # If MIDI duration calculation failed, estimate from beats and BPM
+        if duration_seconds is None:
+            duration_seconds = duration_beats * (60 / bpm)
+            print(f"Warning: Using estimated duration from BPM and beats")
+
+
 
         # Wrap into one dictionary
         full_data = {
             "name": name,
             "bpm": bpm,
+            "duration_beats": round(duration_beats, 2),
+            "duration_seconds": round(duration_seconds, 2),
             "tracks": data   # put all instrument parts under "tracks"
         }
+        
+        # Debug print
+        print(f"\nDuration: {duration_beats:.2f} beats, {duration_seconds:.2f} seconds")
+
 
         # Save the text file
         save_dict_to_txt(full_data, output_path)
