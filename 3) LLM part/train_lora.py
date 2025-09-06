@@ -19,7 +19,7 @@ from datasets import load_dataset
 ############################################################
 # CONSTANTS / CONFIG
 ############################################################
-MODEL_NAME = "gpt2-medium"
+MODEL_NAME = "gpt2-medium"     # test_1 uses: 'distilgpt2', test_2 uses: 'gpt2-medium'
 DOWNLOAD_PATH = "../MODELS/"
 TRAIN_FILE = "../dataset/train.txt"
 OUTPUT_DIR = "../MODELS/Project_Mozart_gpt2-medium"
