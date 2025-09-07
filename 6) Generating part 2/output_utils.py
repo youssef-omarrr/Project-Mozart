@@ -29,20 +29,46 @@ def save_generated_piece(metadata: dict, generated_text: str,
 
     tracks = {}
 
-    # Handle masked instrument format: "Instrument: <MASK>" should become "Instrument: generated_notes"
-    # Regex to find instrument patterns with potential masking
-    pattern = re.compile(r'([A-Za-z][A-Za-z0-9_#\- ]{0,40}?):\s*([^:<]+|<?MASK>?)(?=\s+[A-Za-z][A-Za-z0-9_#\- ]{0,40}?:|$)')
+    # Improved regex pattern to handle the actual generated content
+    # Pattern to match "Instrument: notes..." where notes can contain various characters
+    pattern = re.compile(r'([A-Za-z][A-Za-z0-9_#\- ]{0,40}?):\s*([^<]+?)(?=\s+[A-Za-z][A-Za-z0-9_#\- ]{0,40}?:|$| <TRACKSEP>)')
     matches = pattern.findall(s)
+
+    print(f"Found {len(matches)} instrument matches")  # Debug info
 
     for inst, notes in matches:
         inst_key = inst.strip().lower()
-        # If notes contain <MASK> or are empty, provide default notes
-        if '<MASK>' in notes or not notes.strip() or notes.strip() == '<MASK>':
-            # Provide some default musical content instead of empty/masked
-            tokens = ["C4_q", "D4_q", "E4_q", "F4_q"]  # Simple C major scale
-        else:
-            tokens = [tok for tok in notes.strip().split() if tok]
-        tracks[inst_key] = tokens
+        # Clean up the notes - remove any trailing <TRACKSEP> or other artifacts
+        notes_clean = notes.strip()
+        
+        # Remove any <TRACKSEP> that might be at the end
+        if notes_clean.endswith('<TRACKSEP>'):
+            notes_clean = notes_clean[:-len('<TRACKSEP>')].strip()
+        
+        # Split into tokens, filtering out empty strings
+        tokens = [tok for tok in notes_clean.split() if tok and tok != '<TRACKSEP>']
+        
+        # Only add if we have actual notes (not just empty or masked)
+        if tokens and not all(token == '<MASK>' for token in tokens):
+            tracks[inst_key] = tokens
+            print(f"Added {inst_key}: {tokens}")  # Debug info
+
+    # If no tracks were found with the main pattern, try a more flexible approach
+    if not tracks:
+        print("No tracks found with main pattern, trying alternative parsing...")
+        
+        # Alternative approach: split by <TRACKSEP> and parse each instrument
+        if '<TRACKSEP>' in s:
+            parts = s.split('<TRACKSEP>')
+            for part in parts:
+                part = part.strip()
+                if ':' in part:
+                    inst_part, notes_part = part.split(':', 1)
+                    inst_key = inst_part.strip().lower()
+                    tokens = [tok for tok in notes_part.strip().split() if tok and tok != '<MASK>']
+                    if tokens:
+                        tracks[inst_key] = tokens
+                        print(f"Alternative parsing added {inst_key}: {tokens}")
 
     # 3. Build final JSON structure
     final_output = {
@@ -66,6 +92,6 @@ def save_generated_piece(metadata: dict, generated_text: str,
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(final_output, f, indent=2)
 
-    print(f"Saved piece to {filepath}")
+    print(f"Saved piece to {filepath} with {len(tracks)} tracks")
     
     return filepath

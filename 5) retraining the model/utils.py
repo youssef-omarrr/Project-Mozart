@@ -2,6 +2,9 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
+from filter import MusicalTokenizerWrapper, is_musical_token, add_musical_tokens_to_tokenizer
+
+
 DEFAULT_BASE_MODEL = "../MODELS/gpt2-medium-local/"            # local base model folder (saved_pretrained)
 MY_MODEL_DIR = "../MODELS/Project_Mozart_gpt2-medium"        # where LoRA adapters live
 CACHE_DIR = "../MODELS/"   
@@ -13,14 +16,22 @@ def load_model_and_tokenizer(
     base_model_dir: str = DEFAULT_BASE_MODEL,
     cashed_dir: str = CACHE_DIR,
     device: str =   DEVICE,
-    for_training:bool = False):
+    for_training:bool = False,
+    use_musical_wrapper: bool = True):
     
     # 1. Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(
+    base_tokenizer = AutoTokenizer.from_pretrained(
                                             pretrained_model_name_or_path = my_model_dir,
                                             local_files_only = True,
                                             cache_dir = cashed_dir,
                                             )
+    
+    # Wrap tokenizer if requested
+    if use_musical_wrapper:
+        tokenizer = MusicalTokenizerWrapper(base_tokenizer)
+        add_musical_tokens_to_tokenizer(tokenizer)
+    else:
+        tokenizer = base_tokenizer
     
     # 2. Load model
     base_model  = AutoModelForCausalLM.from_pretrained(
@@ -68,11 +79,16 @@ def update_model_with_mask_token():
     
     # 1. Load and update tokenizer
     print("Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(
+    base_tokenizer = AutoTokenizer.from_pretrained(
         MY_MODEL_DIR,
         local_files_only=True,
         cache_dir=CACHE_DIR,
     )
+    
+    # Wrap tokenizer
+    tokenizer = MusicalTokenizerWrapper(base_tokenizer)
+    add_musical_tokens_to_tokenizer(tokenizer)
+    
     
     # Add MASK token if not already present
     if "<MASK>" not in tokenizer.get_vocab():
@@ -80,13 +96,14 @@ def update_model_with_mask_token():
         print(f"Added <MASK> token. New vocab size: {len(tokenizer)}")
     else:
         print("<MASK> token already exists in vocabulary")
+        
     
     print("Loading base model with correct vocab size...")
     # Load base model first and resize embeddings
     base_model = AutoModelForCausalLM.from_pretrained(
         DEFAULT_BASE_MODEL,
         cache_dir=CACHE_DIR,
-        torch_dtype=torch.float16,
+        dtype=torch.float16,
     )
     
     # Resize base model embeddings FIRST
@@ -114,6 +131,7 @@ def update_model_with_mask_token():
             lora_dropout=0.05,
             bias="none",
             task_type="CAUSAL_LM",
+            loss_type="CE",                         # Explicitly set loss type to Cross Entropy
         )
         model = get_peft_model(base_model, lora_config)
     
@@ -125,7 +143,28 @@ def update_model_with_mask_token():
         model.config.pad_token_id = model.config.eos_token_id
     
     print("Saving updated model...")
-    model.save_pretrained(MY_MODEL_DIR)
+    model.save_pretrained(MY_MODEL_DIR, save_embedding_layers=True)
     tokenizer.save_pretrained(MY_MODEL_DIR)
     
     print("Update complete!")
+    
+    
+# Add a function to analyze the tokenizer
+def analyze_tokenizer(tokenizer):
+    """Analyze the tokenizer's musical vocabulary"""
+    if hasattr(tokenizer, 'base_tokenizer'):
+        base_tokenizer = tokenizer.base_tokenizer
+    else:
+        base_tokenizer = tokenizer
+    
+    musical_tokens = []
+    for token, token_id in base_tokenizer.get_vocab().items():
+        if is_musical_token(token):
+            musical_tokens.append((token, token_id))
+    
+    print(f"Musical tokens found: {len(musical_tokens)}")
+    print("Sample musical tokens:")
+    for token, token_id in musical_tokens[:20]:
+        print(f"  {token_id}: '{token}'")
+    
+    return musical_tokens
