@@ -1,0 +1,17 @@
+{
+  "name": "wow",
+  "bpm": 190.0,
+  "duration_beats": 190,
+  "duration_minutes": 1.0,
+  "tracks": {
+    "piano": [
+      "wow>190>190>1.00>Piano: Rest_q Rest_q Rest_q  Strings: Rest_q Rest_q Rest_q  Guitar: Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_"
+    ],
+    "strings": [
+      "wow>190>190>1.00>Piano: Rest_q Rest_q Rest_q  Strings: Rest_q Rest_q Rest_q  Guitar: Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_"
+    ],
+    "guitar": [
+      "wow>190>190>1.00>Piano: Rest_q Rest_q Rest_q  Strings: Rest_q Rest_q Rest_q  Guitar: Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_q Rest_"
+    ]
+  }
+}

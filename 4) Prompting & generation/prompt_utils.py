@@ -38,15 +38,14 @@ def parse_user_instruction(text: str):
     # -------------------------------------------------------------------------------------------------------- #
     
     # --- BPM parsing with better context awareness ---
-    bpm_match = re.search(r"(\d{2,3})(?:\s*)(?:bpm\b)?", t)
+    bpm_match = re.search(r"\b(\d{2,4})\s*bpm\b", t, flags=re.IGNORECASE)
     bpm = None
     strict_bpm = False
     if bpm_match:
-        span = bpm_match.span()
-        window = t[max(0, span[0]-15): span[1]+15]
         bpm = int(bpm_match.group(1))
-        # Check for approximation keywords
-        strict_bpm = not bool(re.search(r"\baround\b|\bapprox\b|\bapproximately\b|\b~\b|\babout\b", window))
+        span = bpm_match.span()
+        window = t[max(0, span[0]-30): span[1]+30]
+        strict_bpm = not bool(re.search(r"\baround\b|\bapprox\b|\bapproximately\b|\b~\b|\babout\b", window, flags=re.IGNORECASE))
         
     # -------------------------------------------------------------------------------------------------------- #
 
@@ -174,8 +173,8 @@ def parse_user_instruction(text: str):
 
     # Ensure uniqueness
     instruments = list(dict.fromkeys(instruments))
-
-    return {
+    
+    output_dict = {
         "name": name,
         "bpm": bpm,
         "strict_bpm": strict_bpm,
@@ -183,7 +182,55 @@ def parse_user_instruction(text: str):
         "instruments": instruments if instruments else None,
         "raw_text": text,
     }
+    
+    
+    # Fill any missing data by random data
+    output_dict = fill_missing_metadata(output_dict)
 
+    return output_dict
+
+    # -------------------------------------------------------------------------------------------------------- #
+
+    # -------------------------------------------------------------------------------------------------------- #
+    
+def fill_missing_metadata(parsed: dict) -> dict:
+    """
+    Fill in missing fields from parse_user_input with random values.
+    """
+    name = parsed.get("name") or f"Generated_Symphony_{random.randint(0,500)}"
+
+    bpm = parsed.get("bpm")
+    if bpm is None:
+        bpm = float(random.randint(60, 200))  # typical musical tempo range
+
+    duration_minutes = parsed.get("duration_minutes")
+    duration_beats = parsed.get("duration_beats")
+
+    # if missing, compute or randomize
+    if duration_minutes is None and duration_beats is None:
+        duration_minutes = round(random.uniform(0.5, 5.0), 2)  # 30 sec – 5 min
+        duration_beats = int(duration_minutes * bpm)
+    elif duration_minutes is None:
+        duration_minutes = round(duration_beats / bpm, 2)
+    elif duration_beats is None:
+        duration_beats = int(duration_minutes * bpm)
+
+    instruments = parsed.get("instruments")
+    if not instruments:
+        candidate_instruments = [
+            "Piano", "Violin", "Flute", "Clarinet", "Guitar"
+        ]
+        instruments = random.sample(candidate_instruments, k=random.randint(1, 5))
+
+    return {
+        "name": name,
+        "bpm": bpm,
+        "duration_beats": duration_beats,
+        "duration_minutes": duration_minutes,
+        "instruments": instruments,
+    }
+
+    
     # -------------------------------------------------------------------------------------------------------- #
 
     # -------------------------------------------------------------------------------------------------------- #
@@ -214,10 +261,6 @@ def build_structured_prompt(user_parsed: dict):
     instruments = user_parsed.get("instruments")
     prompt_tracks = user_parsed.get("prompt_tracks")
 
-    # Fallback name
-    if not name:
-        name = f"Generated_Symphony_{random.randint(0,500)}"
-
     # Compute beats or minutes if possible
     computed_beats = duration_beats
     computed_minutes = duration_minutes
@@ -232,7 +275,7 @@ def build_structured_prompt(user_parsed: dict):
     if prompt_tracks:
         tracks_snippet = prompt_tracks
     elif instruments:
-        lines = [f"{inst.capitalize()}: Rest_q Rest_q Rest_q" for inst in instruments]
+        lines = [f"{inst.capitalize()}: " for inst in instruments]
         tracks_snippet = " <TRACKSEP> ".join(lines)
     else:
         tracks_snippet = None
