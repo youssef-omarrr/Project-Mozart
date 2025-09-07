@@ -27,9 +27,7 @@ def load_model_and_tokenizer(
     
 
     tokenizer = MusicalTokenizerWrapper(base_tokenizer)
-    add_musical_tokens_to_tokenizer(tokenizer)
 
-    
     # 2. Load model
     base_model  = AutoModelForCausalLM.from_pretrained(
                                             pretrained_model_name_or_path = base_model_dir,
