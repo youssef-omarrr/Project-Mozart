@@ -235,9 +235,10 @@ def fill_missing_metadata(parsed: dict) -> dict:
 
     # -------------------------------------------------------------------------------------------------------- #
 
-def build_structured_prompt(user_parsed: dict):
+def build_structured_prompt(user_parsed: dict, mask_instruments: bool = True):
     """
     Build a structured music generation prompt from parsed user inputs.
+    Optionally mask instruments for the model to generate.
     
     Args:
         user_parsed (dict): dictionary containing keys like:
@@ -247,6 +248,7 @@ def build_structured_prompt(user_parsed: dict):
             - duration_minutes (float | None)
             - instruments (list[str] | None)
             - prompt_tracks (str | None)
+        mask_instruments (bool): Whether to mask instruments with <MASK> token
     
     Returns:
         prompt (str): structured string for the model
@@ -265,20 +267,28 @@ def build_structured_prompt(user_parsed: dict):
     computed_beats = duration_beats
     computed_minutes = duration_minutes
 
+
     if bpm is not None:
         if duration_minutes is not None and duration_beats is None:
             computed_beats = int(round(duration_minutes * bpm))
         elif duration_beats is not None and duration_minutes is None:
             computed_minutes = round(duration_beats / bpm, 3)
+            
 
     # Build track snippet
     if prompt_tracks:
         tracks_snippet = prompt_tracks
     elif instruments:
-        lines = [f"{inst.capitalize()}: " for inst in instruments]
+        if mask_instruments:
+            # Mask all instruments with <MASK> token
+            lines = [f"{inst.capitalize()}: <MASK>" for inst in instruments]
+        else:
+            # Leave instruments empty for model to generate
+            lines = [f"{inst.capitalize()}: " for inst in instruments]
         tracks_snippet = " <TRACKSEP> ".join(lines)
     else:
         tracks_snippet = None
+
 
     # Build structured string
     parts = ["<|startofpiece|>"]
@@ -287,7 +297,7 @@ def build_structured_prompt(user_parsed: dict):
     if bpm is not None:
         parts.append(f"<BPM={int(bpm)}>")  
     else:
-        parts.append("<BPM= 120>")
+        parts.append("<BPM=120>")  # Added default BPM
 
     if computed_beats is not None:
         parts.append(f"<DURATION_BEATS={int(computed_beats)}>")  
@@ -307,7 +317,7 @@ def build_structured_prompt(user_parsed: dict):
 
     meta = {
         "name": name,
-        "bpm": float(bpm) if bpm is not None else None,
+        "bpm": float(bpm) if bpm is not None else 120.0,  # Added default
         "duration_beats": computed_beats,
         "duration_minutes": computed_minutes,
         "instruments": instruments,
