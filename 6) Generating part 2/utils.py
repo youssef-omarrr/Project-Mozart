@@ -4,6 +4,7 @@ from peft import PeftModel
 
 from prompt_utils import *
 from output_utils import save_generated_piece
+from filter import MusicalTokenizerWrapper
 
 DEFAULT_BASE_MODEL = "../MODELS/gpt2-medium-local/"            # local base model folder (saved_pretrained)
 MY_MODEL_DIR = "../MODELS/Project_Mozart_gpt2-medium"        # where LoRA adapters live
@@ -19,12 +20,15 @@ def load_model_and_tokenizer(
     for_training:bool = False):
     
     # 1. Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(
+    base_tokenizer = AutoTokenizer.from_pretrained(
                                             pretrained_model_name_or_path = my_model_dir,
                                             local_files_only = True,
                                             cache_dir = cashed_dir,
                                             )
     
+
+    tokenizer = MusicalTokenizerWrapper(base_tokenizer)
+
     # 2. Load model
     base_model  = AutoModelForCausalLM.from_pretrained(
                                             pretrained_model_name_or_path = base_model_dir,
@@ -36,12 +40,28 @@ def load_model_and_tokenizer(
     base_model.resize_token_embeddings(len(tokenizer),
                                         mean_resizing=False)
     
-    # 3. Apply LoRA
-    model = PeftModel.from_pretrained(
-                                base_model,
-                                my_model_dir, 
-                                local_files_only=True
-                                ).to(device)
+    # 3. Try to load LoRA with ignore_mismatched_sizes
+    try:
+        model = PeftModel.from_pretrained(
+            base_model,
+            my_model_dir,
+            local_files_only=True,
+            ignore_mismatched_sizes=True  # This allows size mismatches
+        ).to(device)
+        
+    except Exception as e:
+        print(f"Could not load adapters: {e}. Creating new adapters...")
+        from peft import LoraConfig, get_peft_model
+        
+        lora_config = LoraConfig(
+            r=8,
+            lora_alpha=16,
+            target_modules=["c_attn", "c_proj"],
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
+        model = get_peft_model(base_model, lora_config).to(device)
     
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
