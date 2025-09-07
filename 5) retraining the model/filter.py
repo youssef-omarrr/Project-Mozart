@@ -47,6 +47,7 @@ def add_musical_tokens_to_tokenizer(tokenizer):
     # Add tokens to tokenizer
     tokenizer.add_tokens(musical_tokens)
     print(f"Added {len(musical_tokens)} musical tokens to vocabulary")
+    
     return tokenizer
 
 

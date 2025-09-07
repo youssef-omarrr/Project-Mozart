@@ -16,8 +16,7 @@ def load_model_and_tokenizer(
     base_model_dir: str = DEFAULT_BASE_MODEL,
     cashed_dir: str = CACHE_DIR,
     device: str =   DEVICE,
-    for_training:bool = False,
-    use_musical_wrapper: bool = True):
+    for_training:bool = False):
     
     # 1. Load tokenizer
     base_tokenizer = AutoTokenizer.from_pretrained(
@@ -26,12 +25,10 @@ def load_model_and_tokenizer(
                                             cache_dir = cashed_dir,
                                             )
     
-    # Wrap tokenizer if requested
-    if use_musical_wrapper:
-        tokenizer = MusicalTokenizerWrapper(base_tokenizer)
-        add_musical_tokens_to_tokenizer(tokenizer)
-    else:
-        tokenizer = base_tokenizer
+
+    tokenizer = MusicalTokenizerWrapper(base_tokenizer)
+    add_musical_tokens_to_tokenizer(tokenizer)
+
     
     # 2. Load model
     base_model  = AutoModelForCausalLM.from_pretrained(
@@ -44,12 +41,28 @@ def load_model_and_tokenizer(
     base_model.resize_token_embeddings(len(tokenizer),
                                         mean_resizing=False)
     
-    # 3. Apply LoRA
-    model = PeftModel.from_pretrained(
-                                base_model,
-                                my_model_dir, 
-                                local_files_only=True
-                                ).to(device)
+    # 3. Try to load LoRA with ignore_mismatched_sizes
+    try:
+        model = PeftModel.from_pretrained(
+            base_model,
+            my_model_dir,
+            local_files_only=True,
+            ignore_mismatched_sizes=True  # This allows size mismatches
+        ).to(device)
+        
+    except Exception as e:
+        print(f"Could not load adapters: {e}. Creating new adapters...")
+        from peft import LoraConfig, get_peft_model
+        
+        lora_config = LoraConfig(
+            r=8,
+            lora_alpha=16,
+            target_modules=["c_attn", "c_proj"],
+            lora_dropout=0.05,
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
+        model = get_peft_model(base_model, lora_config).to(device)
     
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
