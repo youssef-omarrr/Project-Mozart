@@ -179,3 +179,33 @@ def analyze_tokenizer(tokenizer):
         print(f"  {token_id}: '{token}'")
     
     return musical_tokens
+
+
+############################################################
+# Plotting
+############################################################
+import matplotlib.pyplot as plt
+import os
+OUTPUT_DIR = "../MODELS/Project_Mozart_gpt2-medium"
+
+def plot_metrics(metrics_history):
+    """Plot training metrics"""
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+    
+    # Loss plot
+    axes[0].plot(metrics_history['train_loss'], label='Train Loss', marker='o')
+    if 'val_loss' in metrics_history:
+        axes[0].plot(metrics_history['val_loss'], label='Val Loss', marker='s')
+    axes[0].set_title('Training and Validation Loss')
+    axes[0].set_xlabel('Epoch')
+    axes[0].set_ylabel('Loss')
+    axes[0].legend()
+    axes[0].grid(True)
+    
+    # Additional metrics can be added here
+    axes[1].set_title('Training Metrics')
+    axes[1].set_visible(False)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, 'training_metrics.png'))
+    plt.show()

@@ -32,8 +32,10 @@ class MusicTokenEnforcementLoss(nn.Module):
         self.ce_loss = nn.CrossEntropyLoss(ignore_index=-100)
         
         # Create mask for non-music tokens
-        self.non_music_mask = torch.ones(tokenizer.vocab_size)
-        self.non_music_mask[music_token_ids] = 0  # Music tokens get 0 penalty
+        valid_music_ids = [i for i in music_token_ids if 0 <= i < len(tokenizer)]
+        self.non_music_mask = torch.ones(len(tokenizer))
+        self.non_music_mask[valid_music_ids] = 0  # Music tokens get 0 penalty
+
         self.non_music_mask[tokenizer.pad_token_id] = 0  # Ignore padding
         self.non_music_mask[tokenizer.eos_token_id] = 0  # Ignore EOS
         self.non_music_mask = self.non_music_mask.to(DEVICE)

@@ -1,8 +1,8 @@
 import re
 from datasets import load_dataset
 
-TRAIN_FILE = "../dataset/train_file.txt"
-TEST_FILE = "../dataset/test_file.txt"
+TRAIN_FILE = "../dataset/train_file_2.txt"
+TEST_FILE = "../dataset/test_file_2.txt"
 
 # Enhance the MUSIC_NOTES list
 MUSIC_NOTES = [

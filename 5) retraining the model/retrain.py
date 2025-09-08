@@ -18,8 +18,8 @@ from prepare_dataset import prepare_dataset, MUSIC_NOTES
 ############################################################
 MODEL_NAME = "gpt2-medium"
 DOWNLOAD_PATH = "../MODELS/"
-TRAIN_FILE = "../dataset/train_file.txt"
-TEST_FILE = "../dataset/test_file.txt"
+TRAIN_FILE = "../dataset/train_file_2.txt"
+TEST_FILE = "../dataset/test_file_2.txt"
 OUTPUT_DIR = "../MODELS/Project_Mozart_gpt2-medium"
 
 # Enhanced training hyperparams
@@ -46,9 +46,22 @@ MIN_NOTES_THRESHOLD = 10         # Minimum notes per sequence
 MASK_TOKEN = "<MASK>"
 MUSIC_TOKEN_IDS = None  # Will be populated during initialization
 
+
 def get_music_token_ids(tokenizer):
-    """Get the token IDs for all music notes"""
-    return [tokenizer.convert_tokens_to_ids(note) for note in MUSIC_NOTES]
+    """Get token IDs for MUSIC_NOTES, but filter out invalid / missing ones."""
+    ids = []
+    missing_tokens = []
+    for note in MUSIC_NOTES:
+        tid = tokenizer.convert_tokens_to_ids(note)
+        # Some tokenizers return tokenizer.unk_token_id for unknown tokens, or -1.
+        if tid is None or tid < 0 or tid >= tokenizer.vocab_size:
+            missing_tokens.append((note, tid))
+        else:
+            ids.append(int(tid))
+    if missing_tokens:
+        print(f"[WARN] Some MUSIC_NOTES are missing or invalid in tokenizer: {missing_tokens[:10]} "
+                f"(showing up to 10). Filtered them out.")
+    return ids
 
 ############################################################
 # Enhanced Collate Function
@@ -294,28 +307,3 @@ def train_lora(model, tokenizer):
     return metrics_history
 
 
-############################################################
-# Plotting
-############################################################
-import matplotlib.pyplot as plt
-def plot_metrics(metrics_history):
-    """Plot training metrics"""
-    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
-    
-    # Loss plot
-    axes[0].plot(metrics_history['train_loss'], label='Train Loss', marker='o')
-    if 'val_loss' in metrics_history:
-        axes[0].plot(metrics_history['val_loss'], label='Val Loss', marker='s')
-    axes[0].set_title('Training and Validation Loss')
-    axes[0].set_xlabel('Epoch')
-    axes[0].set_ylabel('Loss')
-    axes[0].legend()
-    axes[0].grid(True)
-    
-    # Additional metrics can be added here
-    axes[1].set_title('Training Metrics')
-    axes[1].set_visible(False)
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, 'training_metrics.png'))
-    plt.show()
