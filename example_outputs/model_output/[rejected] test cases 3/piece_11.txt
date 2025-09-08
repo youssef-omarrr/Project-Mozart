@@ -1,0 +1,19 @@
+{
+  "name": "please work",
+  "bpm": 120.0,
+  "duration_beats": 1200,
+  "duration_minutes": 10.0,
+  "tracks": {
+    "piano": [
+      "Rest_1",
+      "1",
+      "D5_1.75",
+      "B5_2x",
+      "b",
+      "A5_e",
+      "G5_h",
+      "B5_n",
+      "F#5_f"
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 import os
 import re
 import json
+from filter import is_musical_token  # Import the musical token checker
 
 
 def save_generated_piece(metadata: dict, generated_text: str,
@@ -46,12 +47,24 @@ def save_generated_piece(metadata: dict, generated_text: str,
             notes_clean = notes_clean[:-len('<TRACKSEP>')].strip()
         
         # Split into tokens, filtering out empty strings
-        tokens = [tok for tok in notes_clean.split() if tok and tok != '<TRACKSEP>']
+        raw_tokens = [tok for tok in notes_clean.split() if tok and tok != '<TRACKSEP>']
         
-        # Only add if we have actual notes (not just empty or masked)
-        if tokens and not all(token == '<MASK>' for token in tokens):
-            tracks[inst_key] = tokens
-            print(f"Added {inst_key}: {tokens}")  # Debug info
+        # FILTER TOKENS: Only keep musical tokens and remove <MASK>
+        filtered_tokens = []
+        for token in raw_tokens:
+            # Skip <MASK> tokens completely
+            if token == '<MASK>':
+                continue
+            # Only keep musical tokens
+            if is_musical_token(token):
+                filtered_tokens.append(token)
+            else:
+                print(f"Filtered out non-musical token: '{token}'")  # Debug info
+        
+        # Only add if we have actual musical notes
+        if filtered_tokens:
+            tracks[inst_key] = filtered_tokens
+            print(f"Added {inst_key}: {filtered_tokens}")  # Debug info
 
     # If no tracks were found with the main pattern, try a more flexible approach
     if not tracks:
@@ -65,10 +78,19 @@ def save_generated_piece(metadata: dict, generated_text: str,
                 if ':' in part:
                     inst_part, notes_part = part.split(':', 1)
                     inst_key = inst_part.strip().lower()
-                    tokens = [tok for tok in notes_part.strip().split() if tok and tok != '<MASK>']
-                    if tokens:
-                        tracks[inst_key] = tokens
-                        print(f"Alternative parsing added {inst_key}: {tokens}")
+                    raw_tokens = [tok for tok in notes_part.strip().split() if tok]
+                    
+                    # Apply the same filtering here
+                    filtered_tokens = []
+                    for token in raw_tokens:
+                        if token == '<MASK>':
+                            continue
+                        if is_musical_token(token):
+                            filtered_tokens.append(token)
+                    
+                    if filtered_tokens:
+                        tracks[inst_key] = filtered_tokens
+                        print(f"Alternative parsing added {inst_key}: {filtered_tokens}")
 
     # 3. Build final JSON structure
     final_output = {

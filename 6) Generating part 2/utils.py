@@ -4,7 +4,8 @@ from peft import PeftModel
 
 from prompt_utils import *
 from output_utils import save_generated_piece
-from filter import MusicalTokenizerWrapper
+from filter import is_musical_token  # Import the musical token checker
+
 
 DEFAULT_BASE_MODEL = "../MODELS/gpt2-medium-local/"            # local base model folder (saved_pretrained)
 MY_MODEL_DIR = "../MODELS/Project_Mozart_gpt2-medium"        # where LoRA adapters live
@@ -27,7 +28,6 @@ def load_model_and_tokenizer(
                                             )
     
 
-    # tokenizer = MusicalTokenizerWrapper(base_tokenizer)
 
     # 2. Load model
     base_model  = AutoModelForCausalLM.from_pretrained(
@@ -107,20 +107,26 @@ def generate_text(
     # 3. Tokenize input
     inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
 
-    # 4. Generate text - increase max tokens for music generation
+    # 4. Generate text - optimized for music generation
     outputs = model.generate(
         **inputs,
         do_sample=do_sample,      
         temperature=temperature,     
         top_p=top_p,
-        max_new_tokens=512,  # Increased for music generation
-        min_length=50,
+        max_new_tokens=256,  # Reduced - music tokens are more compact
+        min_length=50,       # Reduced min length
         pad_token_id=tokenizer.eos_token_id,
-        repetition_penalty=1.1  # Reduce repetition
-    )         
+        eos_token_id=tokenizer.eos_token_id,
+        repetition_penalty=1.2,  # Higher penalty for repetition
+        no_repeat_ngram_size=3,  # Prevent 3-gram repetitions
+        early_stopping=True      # Stop when EOS is generated
+    )      
 
     # 5. Decode
     text = tokenizer.decode(outputs[0], skip_special_tokens=False)
+    # Clean the generated text to remove non-musical tokens
+    text = clean_generated_text(text)
+    
     print("Generated text:", text)
     
     # 6. Save output
@@ -131,3 +137,40 @@ def generate_text(
     )
     
     return file_path
+
+
+def clean_generated_text(text: str) -> str:
+    """
+    Post-process generated text to ensure only musical tokens remain in tracks
+    """
+    # Find the tracks section
+    tracks_start = text.find("<TRACKS>")
+    if tracks_start == -1:
+        return text
+        
+    before_tracks = text[:tracks_start + len("<TRACKS>")]
+    after_tracks = text[tracks_start + len("<TRACKS>"):]
+    
+    # Process the tracks section
+    lines = []
+    for line in after_tracks.split('<TRACKSEP>'):
+        if ':' in line:
+            inst, notes = line.split(':', 1)
+            # Filter tokens
+            clean_tokens = []
+            for token in notes.split():
+                if token != '<MASK>' and is_musical_token(token):
+                    clean_tokens.append(token)
+            
+            if clean_tokens:  # Only add if we have musical tokens
+                lines.append(f"{inst.strip()}: {' '.join(clean_tokens)}")
+        elif line.strip():  # Handle lines without colons
+            clean_tokens = []
+            for token in line.split():
+                if token != '<MASK>' and is_musical_token(token):
+                    clean_tokens.append(token)
+            if clean_tokens:
+                lines.append(' '.join(clean_tokens))
+    
+    clean_after_tracks = ' <TRACKSEP> '.join(lines)
+    return before_tracks + clean_after_tracks
