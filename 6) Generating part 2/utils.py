@@ -114,7 +114,7 @@ def generate_text(
         temperature=temperature,     
         top_p=top_p,
         max_new_tokens=256,  # Reduced - music tokens are more compact
-        min_length=50,       # Reduced min length
+        min_length=100,       # Reduced min length
         pad_token_id=tokenizer.eos_token_id,
         eos_token_id=tokenizer.eos_token_id,
         repetition_penalty=1.2,  # Higher penalty for repetition
