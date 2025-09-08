@@ -11,7 +11,7 @@ from transformers import get_linear_schedule_with_warmup
 
 from filter import *
 from loss_fn import ConsecutiveRestLoss
-from prepare_dataset import prepare_dataset
+from prepare_dataset import prepare_dataset, MUSIC_NOTES
 
 ############################################################
 # CONSTANTS / CONFIG
@@ -42,6 +42,79 @@ DEFAULT_TARGET_MODULES = ["c_attn", "c_proj", "c_fc"]
 CONSECUTIVE_REST_PENALTY = 5.0  # Heavy penalty for consecutive rests
 NOTE_DENSITY_REWARD = 0.3       # Mild reward for more notes
 MIN_NOTES_THRESHOLD = 10         # Minimum notes per sequence
+
+MASK_TOKEN = "<MASK>"
+MUSIC_TOKEN_IDS = None  # Will be populated during initialization
+
+def get_music_token_ids(tokenizer):
+    """Get the token IDs for all music notes"""
+    return [tokenizer.convert_tokens_to_ids(note) for note in MUSIC_NOTES]
+
+class MusicTokenGenerator:
+    def __init__(self, model, tokenizer):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.music_token_ids = get_music_token_ids(tokenizer)
+        self.mask_token_id = tokenizer.convert_tokens_to_ids(MASK_TOKEN)
+        self.eos_token_id = tokenizer.eos_token_id
+        self.pad_token_id = tokenizer.pad_token_id
+    
+    def generate(self, input_text, max_length=512, temperature=1.0, top_k=50, top_p=0.9):
+        inputs = self.tokenizer(input_text, return_tensors="pt").to(DEVICE)
+        attention_mask = inputs["attention_mask"]
+        
+        generated_tokens = []
+        
+        with torch.inference_mode():
+            for _ in range(max_length):
+                outputs = self.model(**inputs)
+                predictions = outputs.logits[:, -1, :]
+                
+                # Apply temperature
+                predictions = predictions / temperature
+                
+                # Apply top-k filtering
+                if top_k > 0:
+                    top_k_values, top_k_indices = torch.topk(predictions, top_k)
+                    min_values = top_k_values[:, -1].unsqueeze(-1)
+                    predictions = torch.where(predictions < min_values, 
+                                            torch.tensor(float('-inf')).to(DEVICE), 
+                                            predictions)
+                
+                # Apply top-p (nucleus) sampling
+                if top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(predictions, descending=True)
+                    cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+                    
+                    # Remove tokens with cumulative probability above the threshold
+                    sorted_indices_to_remove = cumulative_probs > top_p
+                    # Shift the indices to the right to keep the first token above the threshold
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                    sorted_indices_to_remove[..., 0] = 0
+                    
+                    indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                    predictions = predictions.masked_fill(indices_to_remove, float('-inf'))
+                
+                # HEAVY PENALTY for non-music tokens
+                mask = torch.ones_like(predictions) * float('-inf')
+                mask[:, self.music_token_ids] = 0  # Allow music tokens
+                mask[:, [self.eos_token_id, self.pad_token_id]] = 0  # Allow special tokens
+                
+                # Apply the mask - non-music tokens get -infinity
+                predictions = predictions + mask
+                
+                # Sample from the distribution
+                probs = torch.softmax(predictions, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+                
+                if next_token.item() == self.eos_token_id:
+                    break
+                    
+                generated_tokens.append(next_token.item())
+                inputs["input_ids"] = torch.cat([inputs["input_ids"], next_token], dim=1)
+                attention_mask = torch.cat([attention_mask, torch.ones((1, 1), device=DEVICE)], dim=1)
+                
+        return self.tokenizer.decode(inputs["input_ids"][0])
 
 ############################################################
 # Enhanced Collate Function
@@ -87,7 +160,9 @@ def musical_collate_fn(samples, tokenizer=None):
 # Enhanced Training Loop
 ############################################################
 def train_loop(model, tokenizer, tokenized):
-    """Enhanced training loop with consecutive rest penalty"""
+    """Enhanced training loop with masked token prediction"""
+    global MUSIC_TOKEN_IDS
+    MUSIC_TOKEN_IDS = get_music_token_ids(tokenizer)
     
     custom_loss_fn = ConsecutiveRestLoss(tokenizer, CONSECUTIVE_REST_PENALTY, NOTE_DENSITY_REWARD)
 
@@ -144,6 +219,19 @@ def train_loop(model, tokenizer, tokenized):
                     attention_mask=batch["attention_mask"],
                     labels=batch["labels"]
                 )
+                
+                # Mask predictions for non-music tokens where needed
+                mask_positions = (batch["input_ids"] == tokenizer.convert_tokens_to_ids(MASK_TOKEN))
+                if mask_positions.any():
+                    logits = outputs.logits[mask_positions]
+                    
+                    # Create mask for non-music tokens
+                    music_token_mask = torch.zeros_like(logits)
+                    music_token_mask[:, MUSIC_TOKEN_IDS] = 1
+                    
+                    # Apply mask to logits
+                    logits = logits.masked_fill(music_token_mask == 0, float('-inf'))
+                    outputs.logits[mask_positions] = logits
                 
                 # Apply custom loss
                 total_loss, loss_components = custom_loss_fn(

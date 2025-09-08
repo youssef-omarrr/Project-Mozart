@@ -20,14 +20,14 @@ def load_model_and_tokenizer(
     for_training:bool = False):
     
     # 1. Load tokenizer
-    base_tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
                                             pretrained_model_name_or_path = my_model_dir,
                                             local_files_only = True,
                                             cache_dir = cashed_dir,
                                             )
     
 
-    tokenizer = MusicalTokenizerWrapper(base_tokenizer)
+    # tokenizer = MusicalTokenizerWrapper(base_tokenizer)
 
     # 2. Load model
     base_model  = AutoModelForCausalLM.from_pretrained(

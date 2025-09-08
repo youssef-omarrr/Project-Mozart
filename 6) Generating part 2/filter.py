@@ -67,7 +67,7 @@ class MusicalTokenizerWrapper:
         return musical_token_ids
     
     def __call__(self, *args, **kwargs):
-        """Tokenize text but only keep musical tokens"""
+        """Tokenize text but only return standard fields for generation"""
         result = self.base_tokenizer(*args, **kwargs)
         
         # Create mask for musical tokens
@@ -76,7 +76,12 @@ class MusicalTokenizerWrapper:
             mask = [1 if token_id in self.musical_token_ids else 0 for token_id in input_ids]
             musical_mask.append(mask)
         
-        result["musical_attention_mask"] = musical_mask
+        # Only add musical_attention_mask for training, not for generation
+        # Check if this is for training by looking for specific kwargs
+        if kwargs.get('return_tensors') != 'pt' or 'labels' in kwargs:
+            # This is likely for training, include the musical mask
+            result["musical_attention_mask"] = musical_mask
+        
         return result
     
     def decode(self, *args, **kwargs):

@@ -1,8 +1,19 @@
 import re
 from datasets import load_dataset
+from transformers import GPT2Tokenizer
+import random
 
 TRAIN_FILE = "../dataset/train_file.txt"
 TEST_FILE = "../dataset/test_file.txt"
+
+MUSIC_NOTES = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    "c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b",
+    "r",  # rest
+    "<MASK>",
+    "<|startofpiece|>", "<NAME=", "><BPM=", "><DURATION_BEATS=", "><DURATION_MINUTES=",
+    "<TRACKS>", "Piano:", "Guitar:", "<TRACKSEP>"
+]
 
 def pre_tokenize_musical_text(text):
     """Pre-tokenize musical text to preserve musical tokens"""
@@ -29,12 +40,7 @@ def enhance_training_data(dataset):
         desc="Pre-tokenizing musical data"
     )
     
-    
-############################################################
-# Enhanced Dataset Preparation
-############################################################
-    
-def prepare_dataset(tokenizer):
+def prepare_dataset(tokenizer, mask_probability=0.15):
     """Enhanced dataset preparation with pre-tokenization"""
     
     dataset = load_dataset("text", data_files={
@@ -61,3 +67,21 @@ def prepare_dataset(tokenizer):
     )
 
     return tokenized
+
+def mask_music_tokens(text, mask_probability=0.15):
+    parts = text.split("<MASK>")
+    if len(parts) < 2:
+        return text
+        
+    # Only mask the music sections after <MASK> tokens
+    for i in range(1, len(parts)):
+        tokens = parts[i].split()
+        masked_tokens = []
+        for token in tokens:
+            if token in MUSIC_NOTES and random.random() < mask_probability:
+                masked_tokens.append("<MASK>")
+            else:
+                masked_tokens.append(token)
+        parts[i] = " ".join(masked_tokens)
+        
+    return "<MASK>".join(parts)
