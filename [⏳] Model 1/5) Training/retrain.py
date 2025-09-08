@@ -50,25 +50,30 @@ def get_music_token_ids(tokenizer):
     """Convert music tokens to token IDs"""
     ids = []
     missing_tokens = []
+    
+    # Get the actual vocabulary size that includes added tokens
+    vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
+    print(f"\nTokenizer vocab_size: {tokenizer.vocab_size}, added tokens: {len(tokenizer.get_added_vocab())}, total: {vocab_size}")
+    
     for note in MUSIC_NOTES:
         tid = tokenizer.convert_tokens_to_ids(note)
-        if tid is None or tid < 0 or tid >= tokenizer.vocab_size:
+        if tid is None or tid < 0 or tid >= vocab_size:
             missing_tokens.append((note, tid))
         else:
             ids.append(int(tid))
     if missing_tokens:
-        print(f"[WARN] Some MUSIC_NOTES missing in tokenizer: {missing_tokens[:10]} (showing up to 10)")
+        print(f"[WARN] Some MUSIC_NOTES missing in tokenizer: {missing_tokens[:10]} (showing up to 10), total of {len(missing_tokens)}")
     return ids
 
 
 def collate_fn(samples, tokenizer):
     """
     Collate function for input-target pairs.
-    is_input: True for masked inputs, False for unmasked targets
     """
     input_ids = [torch.tensor(s["input_ids"], dtype=torch.long) for s in samples]
     attention_mask = [torch.tensor(s["attention_mask"], dtype=torch.long) for s in samples]
 
+    # Pad to the same length
     input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=tokenizer.pad_token_id)
     attention_mask = torch.nn.utils.rnn.pad_sequence(attention_mask, batch_first=True, padding_value=0)
 
@@ -77,21 +82,41 @@ def collate_fn(samples, tokenizer):
         "attention_mask": attention_mask
     }
 
-
 def create_training_batch(input_batch, target_batch, tokenizer):
     """
     Create training batch from input (masked) and target (unmasked) batches.
     """
-    # Use masked inputs for model input
-    batch = {
-        "input_ids": input_batch["input_ids"],
-        "attention_mask": input_batch["attention_mask"]
-    }
+    # Ensure both batches have the same shape by padding to max length
+    max_len = max(input_batch["input_ids"].size(1), target_batch["input_ids"].size(1))
     
-    # Use unmasked targets as labels
-    labels = target_batch["input_ids"].clone()
+    # Pad input batch
+    input_ids = torch.nn.functional.pad(
+        input_batch["input_ids"], 
+        (0, max_len - input_batch["input_ids"].size(1)), 
+        value=tokenizer.pad_token_id
+    )
+    attention_mask = torch.nn.functional.pad(
+        input_batch["attention_mask"], 
+        (0, max_len - input_batch["attention_mask"].size(1)), 
+        value=0
+    )
+    
+    # Pad target batch
+    target_ids = torch.nn.functional.pad(
+        target_batch["input_ids"], 
+        (0, max_len - target_batch["input_ids"].size(1)), 
+        value=tokenizer.pad_token_id
+    )
+    
+    # Create labels from padded targets
+    labels = target_ids.clone()
     labels[labels == tokenizer.pad_token_id] = -100  # Ignore padding tokens in loss
-    batch["labels"] = labels
+    
+    batch = {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "labels": labels
+    }
     
     return batch
 
@@ -104,6 +129,7 @@ def train_loop(model, tokenizer, tokenized):
     
     global MUSIC_TOKEN_IDS
     MUSIC_TOKEN_IDS = get_music_token_ids(tokenizer)
+    print(f"Found {len(MUSIC_TOKEN_IDS)} music token IDs\n")
 
     # Loss function
     custom_loss_fn = MusicTokenEnforcementLoss(tokenizer, MUSIC_TOKEN_IDS, non_music_penalty=100.0)
@@ -113,7 +139,7 @@ def train_loop(model, tokenizer, tokenized):
         tokenized["train_input"], 
         batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
         shuffle=False,  # Important: don't shuffle to maintain input-target correspondence
-        collate_fn=lambda s: collate_fn(s, tokenizer, is_input=True), 
+        collate_fn=lambda s: collate_fn(s, tokenizer), 
         pin_memory=True
     )
     
@@ -121,7 +147,7 @@ def train_loop(model, tokenizer, tokenized):
         tokenized["train_target"], 
         batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
         shuffle=False,  # Important: don't shuffle to maintain input-target correspondence
-        collate_fn=lambda s: collate_fn(s, tokenizer, is_input=False), 
+        collate_fn=lambda s: collate_fn(s, tokenizer), 
         pin_memory=True
     )
     
@@ -129,7 +155,7 @@ def train_loop(model, tokenizer, tokenized):
         tokenized["test_input"], 
         batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
         shuffle=False, 
-        collate_fn=lambda s: collate_fn(s, tokenizer, is_input=True), 
+        collate_fn=lambda s: collate_fn(s, tokenizer), 
         pin_memory=True
     )
     
@@ -137,7 +163,7 @@ def train_loop(model, tokenizer, tokenized):
         tokenized["test_target"], 
         batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
         shuffle=False, 
-        collate_fn=lambda s: collate_fn(s, tokenizer, is_input=False), 
+        collate_fn=lambda s: collate_fn(s, tokenizer), 
         pin_memory=True
     )
 
@@ -156,6 +182,7 @@ def train_loop(model, tokenizer, tokenized):
     metrics_history = defaultdict(list)
     global_step = 0
     model.train()
+    
 
     for epoch in range(EPOCHS):
         epoch_loss = 0.0

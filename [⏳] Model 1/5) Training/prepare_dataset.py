@@ -49,9 +49,13 @@ def prepare_dataset(tokenizer):
     # Load raw text datasets
     dataset = load_dataset("text", data_files=data_files)
     
-    # Pre-tokenize musical tokens
+    # Only pre-tokenize if needed - your files might already be properly formatted
+    # Comment out this section if your input/target files are already clean
+    """
+    # Pre-tokenize musical tokens (optional - only if files contain non-music tokens)
     for split in dataset.keys():
         dataset[split] = enhance_dataset(dataset[split])
+    """
     
     # Tokenize using tokenizer
     def tokenize_fn(examples):
