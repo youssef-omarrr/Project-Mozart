@@ -22,7 +22,7 @@ os.environ["XDG_CACHE_HOME"] = str(DOWNLOAD_PATH)     # some libs respect this
 # --- now import transformer classes (env set above) ---
 from transformers import (
     AutoTokenizer,
-    AutoModelForCausalLM,
+    AutoModelForSeq2SeqLM,
 )
 from peft import (
     LoraConfig,
@@ -31,9 +31,9 @@ from peft import (
 )
 
 # ----------------- CONFIG -----------------
-MODEL_NAME = "lucadiliello/bart-small"   # set to the HF repo-id you want
+MODEL_NAME = "facebook/bart-base"  
 UNIQUE_NOTES_FILE = Path("../../dataset/unique_notes.txt")
-OUTPUT_DIR = Path("../../MODELS/Project_Mozart_bart-small").resolve()
+OUTPUT_DIR = Path("../../MODELS/Project_Mozart_bart").resolve()
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # LoRA target modules etc. (tweak for your model if needed)
@@ -108,7 +108,7 @@ def create_model_and_tokenizer(
 
     # ensure pad token set
     if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token = "<pad>"
         
 
     # Save tokenizer right away to OUTPUT_DIR (so it's available even if model load later fails)
@@ -120,15 +120,13 @@ def create_model_and_tokenizer(
     # choose dtype: use float16 if GPU available, otherwise float32 to avoid CPU fp16 issues
     torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
-
-    # Try to load as causal LM (user originally used AutoModelForCausalLM)
-    model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForSeq2SeqLM.from_pretrained(
         model_name,
         cache_dir=str(download_dir),
         dtype=torch_dtype,
         local_files_only=False,
     )
-    print("Loaded model with AutoModelForCausalLM.")
+    print("Loaded model with AutoModelForSeq2SeqLM (for BART).")  # CHANGED
 
     # move to device
     model.to(DEVICE)
@@ -153,7 +151,7 @@ def create_model_and_tokenizer(
         target_modules=DEFAULT_TARGET_MODULES,
         lora_dropout=0.05,
         bias="none",
-        task_type="CAUSAL_LM", 
+        task_type="SEQ_2_SEQ_LM", 
     )
 
     # Wrap model with LoRA adapters (this is a lightweight operation)

@@ -34,31 +34,9 @@ class MusicTokenEnforcementLoss(nn.Module):
         
         print(f"Initialized MusicTokenEnforcementLoss with {len(self.valid_music_ids)} valid music token IDs")
         
-        # Store special token IDs for later use
-        self.special_token_ids = []
-        
-        # Collect special token IDs
-        if hasattr(tokenizer, 'pad_token_id') and tokenizer.pad_token_id is not None:
-            self.special_token_ids.append(tokenizer.pad_token_id)
-            
-        if hasattr(tokenizer, 'eos_token_id') and tokenizer.eos_token_id is not None:
-            self.special_token_ids.append(tokenizer.eos_token_id)
-            
-        if hasattr(tokenizer, 'bos_token_id') and tokenizer.bos_token_id is not None:
-            self.special_token_ids.append(tokenizer.bos_token_id)
-            
-        if hasattr(tokenizer, 'mask_token_id') and tokenizer.mask_token_id is not None:
-            self.special_token_ids.append(tokenizer.mask_token_id)
-        
-        # Handle any other special tokens that start with '<' and end with '>'
-        try:
-            vocab = tokenizer.get_vocab()
-            for token, token_id in vocab.items():
-                if token.startswith('<') and token.endswith('>'):
-                    if token_id not in self.special_token_ids:
-                        self.special_token_ids.append(token_id)
-        except Exception as e:
-            print(f"Warning: Could not process special tokens: {e}")
+        # USE THE CANONICAL LIST OF SPECIAL TOKENS FROM THE TOKENIZER
+        # This is more reliable than manually searching
+        self.special_token_ids = tokenizer.all_special_ids
         
         # Identify rest token IDs
         self.rest_token_ids = []
@@ -93,8 +71,7 @@ class MusicTokenEnforcementLoss(nn.Module):
         
         self.model_vocab_size = actual_vocab_size
     
-    def forward(self, logits, labels, attention_mask=None):
-        # Standard cross entropy loss - only compute where labels != -100
+    def forward(self, logits, labels, attention_mask=None, mask_positions=None, top_k=5):        # Standard cross entropy loss - only compute where labels != -100
         ce_loss = self.ce_loss(logits.view(-1, logits.size(-1)), labels.view(-1))
         
         # Initialize mask if not done yet or if vocab size changed
@@ -102,24 +79,63 @@ class MusicTokenEnforcementLoss(nn.Module):
         if self.non_music_mask is None or self.model_vocab_size != actual_vocab_size:
             self._initialize_mask(actual_vocab_size, logits.device)
         
-        # Heavy penalty for non-music token predictions
+        # ****************** ROBUST VALID POSITIONS MASK ******************
+        # This is the most accurate way to find positions that are real data, not padding.
+        # 1. Start with the attention mask (1=real token, 0=padding)
+        if attention_mask is None:
+            # If no mask provided, assume all positions are valid
+            valid_positions = torch.ones_like(labels, dtype=torch.bool)
+        else:
+            valid_positions = (attention_mask == 1)
+
+        # 2. IMPORTANT: Also ignore positions where labels are -100 (the ignore_index)
+        # This is a standard practice in Hugging Face models.
+        valid_positions = valid_positions & (labels != -100)
+        
+        # ****************** CRITICAL: ONLY AT MASK POSITIONS ******************
+        if mask_positions is not None:
+            # Ensure mask_positions is on the same device and has same shape
+            mask_positions = mask_positions.to(valid_positions.device)
+            if mask_positions.shape != valid_positions.shape:
+                # Handle potential shape mismatch from padding
+                mask_positions = torch.nn.functional.pad(
+                    mask_positions, 
+                    (0, valid_positions.shape[1] - mask_positions.shape[1]), 
+                    value=False
+                )
+            valid_positions = valid_positions & mask_positions
+            
+        # ****************** TOP-K PENALTY LOGIC ******************
+        # Get the top-k predicted token IDs and their values
+        topk_values, topk_indices = torch.topk(logits, k=top_k, dim=-1)  # shapes: [batch, seq, k]
+        
+        # Check if any of the top-k predictions are non-music tokens
+        expanded_mask = self.non_music_mask.unsqueeze(0).unsqueeze(0)
+        topk_is_non_music = expanded_mask[:, :, topk_indices]
+        
+        # Check if ANY of the top-k predictions are non-music: [batch, seq]
+        any_topk_non_music = topk_is_non_music.any(dim=-1)
+        
+        # Penalize only on valid positions (real tokens, not ignored by labels)
+        penalty_positions = (any_topk_non_music & valid_positions)
+
+        # Calculate the penalty loss based on the highest non-music probability in top-k
         probs = torch.softmax(logits, dim=-1)
         
-        # Calculate probability mass assigned to non-music tokens
-        non_music_probs = probs * self.non_music_mask.unsqueeze(0).unsqueeze(0)
-        non_music_mass = non_music_probs.sum(dim=-1)
+        # Get the maximum probability among non-music tokens in the top-k
+        non_music_in_topk = topk_is_non_music.float()
+        topk_probs = torch.softmax(topk_values, dim=-1)
+        max_non_music_prob = (topk_probs * non_music_in_topk).max(dim=-1)[0]
+        # Replace any zeros (where no non-music was in top-k) with a small value to avoid log(0)
+        max_non_music_prob = torch.clamp(max_non_music_prob, min=1e-12)
         
-        # Only apply penalty where we have valid labels (not -100)
-        valid_positions = (labels != -100).float()
-        
-        # Apply penalty only where model actually predicts non-music tokens
-        penalty_mask = (non_music_mass > 0.01).float() * valid_positions
-        non_music_penalty_loss = (non_music_mass * penalty_mask * self.non_music_penalty).mean()
-        
+        # Apply penalty
+        non_music_penalty_loss = (-torch.log(max_non_music_prob) * penalty_positions * self.non_music_penalty).mean()
+
         total_loss = ce_loss + non_music_penalty_loss
         
         return total_loss, {
             'ce_loss': ce_loss.item(),
             'non_music_penalty': non_music_penalty_loss.item(),
-            'non_music_predictions': (penalty_mask > 0).sum().item()
+            'non_music_predictions': penalty_positions.sum().item()
         }

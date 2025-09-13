@@ -2,10 +2,10 @@ from datasets import load_dataset
 from filter import is_music_token 
 
 # Paths to your processed train/test files
-TRAIN_INPUTS = "../../dataset/train_inputs.txt"
-TRAIN_TARGETS = "../../dataset/train_targets.txt"
-TEST_INPUTS = "../../dataset/test_inputs.txt"
-TEST_TARGETS = "../../dataset/test_targets.txt"
+TRAIN_INPUTS = "D:/Codess & Projects/Project Mozart/dataset/train_inputs.txt"
+TRAIN_TARGETS = "D:/Codess & Projects/Project Mozart/dataset/train_targets.txt"
+TEST_INPUTS = "D:/Codess & Projects/Project Mozart/dataset/test_inputs.txt"
+TEST_TARGETS = "D:/Codess & Projects/Project Mozart/dataset/test_targets.txt"
 
 
 def pre_tokenize_musical_text(text: str) -> str:
@@ -41,24 +41,26 @@ def prepare_dataset(tokenizer):
     
     data_files = {
         "train_input": TRAIN_INPUTS,
-        "train_target": TRAIN_TARGETS,
+        "train_target": TRAIN_TARGETS,  # These should be PARALLEL files
         "test_input": TEST_INPUTS,
-        "test_target": TEST_TARGETS
+        "test_target": TEST_TARGETS     # line 1 of targets should correspond to line 1 of inputs
     }
 
     # Load raw text datasets
     dataset = load_dataset("text", data_files=data_files)
     
-    # Only pre-tokenize if needed - your files might already be properly formatted
-    # Comment out this section if your input/target files are already clean
-    """
-    # Pre-tokenize musical tokens (optional - only if files contain non-music tokens)
-    for split in dataset.keys():
-        dataset[split] = enhance_dataset(dataset[split])
-    """
+    # CRITICAL: Verify input-target alignment
+    print(f"Train inputs: {len(dataset['train_input'])}")
+    print(f"Train targets: {len(dataset['train_target'])}")
+    print(f"Test inputs: {len(dataset['test_input'])}")
+    print(f"Test targets: {len(dataset['test_target'])}")
+    
+    # Sample check - first few lines should correspond
+    print("\nSample input:", dataset['train_input'][0]['text'][:100])
+    print("Sample target:", dataset['train_target'][0]['text'][:100])
     
     # Tokenize using tokenizer
-    def tokenize_fn(examples):
+    def tokenize_input_fn(examples):
         return tokenizer(
             examples["text"],
             truncation=True,
@@ -66,13 +68,42 @@ def prepare_dataset(tokenizer):
             padding=False
         )
     
-    tokenized = {}
-    for split in dataset.keys():
-        tokenized[split] = dataset[split].map(
-            tokenize_fn,
-            batched=True,
-            remove_columns=["text"],
-            desc=f"Tokenizing {split} data"
+    def tokenize_target_fn(examples):
+        return tokenizer(
+            examples["text"], 
+            truncation=True,
+            max_length=1024,
+            padding=False
         )
+    
+    tokenized = {}
+    tokenized["train_input"] = dataset["train_input"].map(
+        tokenize_input_fn,
+        batched=True,
+        remove_columns=["text"],
+        desc="Tokenizing train inputs"
+    )
+    
+    tokenized["train_target"] = dataset["train_target"].map(
+        tokenize_target_fn,
+        batched=True,
+        remove_columns=["text"],
+        desc="Tokenizing train targets"
+    )
+    
+    # Repeat for test
+    tokenized["test_input"] = dataset["test_input"].map(
+        tokenize_input_fn,
+        batched=True,
+        remove_columns=["text"],
+        desc="Tokenizing test inputs"
+    )
+    
+    tokenized["test_target"] = dataset["test_target"].map(
+        tokenize_target_fn,
+        batched=True,
+        remove_columns=["text"],
+        desc="Tokenizing test targets"
+    )
     
     return tokenized

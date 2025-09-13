@@ -112,10 +112,23 @@ def create_training_batch(input_batch, target_batch, tokenizer):
     labels = target_ids.clone()
     labels[labels == tokenizer.pad_token_id] = -100  # Ignore padding tokens in loss
     
+    # NEW: Create mask_positions tensor
+    # This identifies where the original MASK tokens were
+    mask_token_id = tokenizer.convert_tokens_to_ids("<MASK>")
+    mask_positions = (input_batch["input_ids"] == mask_token_id)
+    
+    # Pad the mask_positions to match the padded sequence length
+    mask_positions = torch.nn.functional.pad(
+        mask_positions,
+        (0, max_len - mask_positions.size(1)),
+        value=False
+    )
+    
     batch = {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
-        "labels": labels
+        "labels": labels,
+        "mask_positions": mask_positions  # NEW: Add mask positions to batch
     }
     
     return batch
@@ -208,7 +221,8 @@ def train_loop(model, tokenizer, tokenized):
                 total_loss, loss_components = custom_loss_fn(
                     outputs.logits, 
                     batch["labels"],
-                    batch["attention_mask"]
+                    batch["attention_mask"],
+                    mask_positions=batch["mask_positions"]  # NEW: Pass mask positions
                 )
                 loss_reduced = total_loss / GRAD_ACCUM_STEPS
 
@@ -252,7 +266,14 @@ def train_loop(model, tokenizer, tokenized):
                         model, custom_loss_fn, 
                         val_input_dataloader, val_target_dataloader, tokenizer
                     )
-                    print(f"\nValidation at step {global_step}: {val_metrics}")
+                    
+                    print(f"\nValidation at step {global_step}:")
+                    print(f"  Total Loss: {val_metrics['val_loss']:.4f}")
+                    print(f"  CE Loss: {val_metrics['val_ce_loss']:.4f}")  # NEW
+                    print(f"  Penalty Loss: {val_metrics['val_penalty_loss']:.4f}")  # NEW
+                    print(f"  Non-Music Errors: {val_metrics['non_music_predictions']}/{val_metrics['total_mask_positions']}")
+                    print(f"  Error Rate: {val_metrics['error_rate']:.3%}")  # Shows as percentage
+                    
                     metrics_history['val_loss'].append(val_metrics['val_loss'])
 
         avg_train_loss = epoch_loss / max(1, steps_in_epoch)
@@ -262,7 +283,13 @@ def train_loop(model, tokenizer, tokenized):
             model, custom_loss_fn, 
             val_input_dataloader, val_target_dataloader, tokenizer
         )
-        print(f"\nEpoch {epoch+1} finished. Train Loss: {avg_train_loss:.4f}, Val Loss: {val_metrics['val_loss']:.4f}")
+        
+        print(f"\nEpoch {epoch+1} finished.")
+        print(f"  Train Loss: {avg_train_loss:.4f}")
+        print(f"  Val Total Loss: {val_metrics['val_loss']:.4f}")
+        print(f"  Val CE Loss: {val_metrics['val_ce_loss']:.4f}")
+        print(f"  Val Penalty Loss: {val_metrics['val_penalty_loss']:.4f}")
+        print(f"  Val Error Rate: {val_metrics['error_rate']:.3%}")  # Shows as percentage
         
         # Save model after each epoch
         os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -278,15 +305,26 @@ def evaluate_model(model, loss_fn, input_dataloader, target_dataloader, tokenize
     Evaluate model using paired input and target dataloaders.
     """
     model.eval()
+    
     total_loss = 0.0
+    total_ce_loss = 0.0  # NEW: Track CE loss separately
+    
+    total_penalty_loss = 0.0  # NEW: Track penalty loss separately
     total_steps = 0
+    
     total_non_music_predictions = 0
-
-    with torch.no_grad():
+    total_mask_positions = 0  # NEW: Track total mask positions
+    
+    with torch.inference_mode():
         paired_dataloader = zip(input_dataloader, target_dataloader)
+        
         for input_batch, target_batch in tqdm(paired_dataloader, desc="Evaluating"):
+            
             batch = create_training_batch(input_batch, target_batch, tokenizer)
             batch = {k: v.to(DEVICE) for k, v in batch.items()}
+            
+            # NEW: Count total mask positions in this batch
+            total_mask_positions += batch["mask_positions"].sum().item()
             
             with torch.amp.autocast(enabled=USE_FP16, device_type=DEVICE):
                 outputs = model(
@@ -294,19 +332,31 @@ def evaluate_model(model, loss_fn, input_dataloader, target_dataloader, tokenize
                     attention_mask=batch["attention_mask"],
                     labels=batch["labels"]
                 )
+                
                 loss, loss_components = loss_fn(
                     outputs.logits, 
                     batch["labels"], 
-                    batch["attention_mask"]
+                    batch["attention_mask"],
+                    mask_positions=batch["mask_positions"]  # NEW: Pass mask positions
                 )
+                
                 total_loss += loss.item()
+                total_ce_loss += loss_components['ce_loss']  # NEW
+                total_penalty_loss += loss_components['non_music_penalty']  # NEW
                 total_non_music_predictions += loss_components.get('non_music_predictions', 0)
                 total_steps += 1
 
     model.train()
+    
+    # Return all metrics separately for better insight
     return {
         'val_loss': total_loss / max(1, total_steps),
-        'non_music_predictions': total_non_music_predictions
+        'val_ce_loss': total_ce_loss / max(1, total_steps),
+        'val_penalty_loss': total_penalty_loss / max(1, total_steps),
+        
+        'non_music_predictions': total_non_music_predictions,
+        'total_mask_positions': total_mask_positions,  # NEW: Return total positions
+        'error_rate': total_non_music_predictions / total_mask_positions if total_mask_positions > 0 else 0  # NEW: Calculate error rate
     }
 
 
