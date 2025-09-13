@@ -366,11 +366,6 @@ def evaluate_model(model, loss_fn, input_dataloader, target_dataloader, tokenize
 def train_lora(model, tokenizer):
     """Main training function"""
     model.train()
-    
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total_params = sum(p.numel() for p in model.parameters())
-    
-    print(f"Trainable params: {trainable_params:,} / {total_params:,} ({trainable_params/total_params:.2%})")
 
     # Prepare dataset - now returns separate input and target datasets
     tokenized = prepare_dataset(tokenizer)

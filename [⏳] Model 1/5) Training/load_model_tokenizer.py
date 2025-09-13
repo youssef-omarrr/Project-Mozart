@@ -49,7 +49,27 @@ def load_model_and_tokenizer(
                                         mean_resizing=False)
 
     
-    # 5. Set mode
-    model.train() if for_training else model.eval()
+    # Only set to eval mode if NOT for training
+    if not for_training:
+        model.eval()
+        print("Loaded model in eval mode.....")
+        
+        # trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        # total_params = sum(p.numel() for p in model.parameters())
+        
+        # print(f"Trainable params: {trainable_params:,} / {total_params:,} ({trainable_params/total_params:.2%})")
+    else:
+        model.train()  # Set to training mode
+        # Ensure LoRA parameters are trainable
+        for name, param in model.named_parameters():
+            if "lora" in name.lower():
+                param.requires_grad = True
+        
+        print("Loaded model in trining mode.....")
+        
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in model.parameters())
+        
+        print(f"Trainable params: {trainable_params:,} / {total_params:,} ({trainable_params/total_params:.2%})")
     
     return model, tokenizer
