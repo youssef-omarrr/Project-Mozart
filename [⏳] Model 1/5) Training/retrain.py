@@ -22,7 +22,7 @@ OUTPUT_DIR = "../../MODELS/Project_Mozart_bart-small"
 EPOCHS = 5
 PER_DEVICE_TRAIN_BATCH_SIZE = 2
 GRAD_ACCUM_STEPS = 8
-LEARNING_RATE = 1.5e-4
+LEARNING_RATE = 3e-5  # Much lower than 1.5e-4
 WEIGHT_DECAY = 0.01
 WARMUP_STEPS = 500
 
@@ -141,6 +141,43 @@ def train_loop(model, tokenizer, tokenized):
     metrics_history = defaultdict(list)
     global_step = 0
     model.train()
+    
+    # --------------------------------------------------------------------------------------------------- #
+    # print("\n🧪 TESTING LOSS FUNCTION:")
+    # # Get one batch for testing
+    # test_batch = next(iter(train_dataloader))
+    # test_batch = {k: v.to(DEVICE) for k, v in test_batch.items()}
+
+    # # Forward pass
+    # with torch.no_grad():
+    #     test_outputs = model(**{k: v for k, v in test_batch.items() if k in ['input_ids', 'attention_mask', 'labels']})
+        
+    #     # Test loss function
+    #     test_loss, test_components = custom_loss_fn(
+    #         test_outputs.logits,
+    #         test_batch["labels"],
+    #         test_batch["attention_mask"],
+    #         mask_positions=test_batch["mask_positions"]
+    #     )
+        
+    #     print(f"Test loss: {test_loss.item():.4f}")
+    #     print(f"Test components: {test_components}")
+        
+    #     # Check if loss function is actually constraining
+    #     pred_ids = test_outputs.logits.argmax(dim=-1)
+    #     mask_pos = test_batch["mask_positions"].bool()
+        
+    #     if mask_pos.sum().item() > 0:
+    #         masked_preds = pred_ids[mask_pos]
+    #         music_token_set = set(MUSIC_TOKEN_IDS)
+    #         music_count = sum(1 for pid in masked_preds if pid.item() in music_token_set)
+    #         total_preds = masked_preds.numel()
+            
+    #         print(f"Music predictions: {music_count}/{total_preds} ({music_count/total_preds*100:.1f}%)")
+        
+    # print("=" * 50)
+    # --------------------------------------------------------------------------------------------------- #
+    
 
     for epoch in range(EPOCHS):
         epoch_loss = 0.0
@@ -157,26 +194,38 @@ def train_loop(model, tokenizer, tokenized):
                     attention_mask=batch["attention_mask"],
                     labels=batch["labels"],
                 )
+                
+                # --------------------------------------------------------------------------------------------------- #
+                if step == 0 and epoch == 0:  # Only debug first step
+                    print("\n🔍 DEBUGGING PREDICTIONS:")
+                    
+                    # Get predictions
+                    pred_ids = outputs.logits.argmax(dim=-1)  # [B, S]
+                    mask_pos = batch["mask_positions"].bool()  # [B, S]
+                    
+                    print(f"Mask positions found: {mask_pos.sum().item()}")
+                    
+                    if mask_pos.sum().item() > 0:
+                        # Get predictions at mask positions
+                        masked_preds = pred_ids[mask_pos][:10]  # First 10 predictions
+                        masked_labels = batch["labels"][mask_pos][:10]  # First 10 labels
+                        
+                        print("First 10 predictions at mask positions:")
+                        for i, (pred_id, label_id) in enumerate(zip(masked_preds, masked_labels)):
+                            pred_token = tokenizer.decode([pred_id.item()])
+                            label_token = tokenizer.decode([label_id.item()]) if label_id.item() != -100 else "N/A"
+                            print(f"  {i}: Pred='{pred_token}' | Label='{label_token}'")
+                    else:
+                        print("❌ NO MASK POSITIONS FOUND!")
+                    print("=" * 50)
+                # --------------------------------------------------------------------------------------------------- #
+                
                 total_loss, loss_components = custom_loss_fn(
                     outputs.logits,
                     batch["labels"],
                     batch["attention_mask"],
                     mask_positions=batch["mask_positions"],
                 )
-
-                    # --- DEBUG sanity check ---
-                if step == 0 and epoch == 0:  # only print once at the very start
-                    pred_ids = outputs.logits.argmax(dim=-1)
-                    mask_pos = batch["mask_positions"].bool()
-
-                    # Slice to first 20 predictions/labels at mask positions
-                    preds = tokenizer.batch_decode(pred_ids[mask_pos][:20].tolist())
-                    labels = tokenizer.batch_decode(batch["labels"][mask_pos][:20].tolist())
-
-                    print("\n=== DEBUG SANITY CHECK ===")
-                    print("Predicted tokens:", preds)
-                    print("Label tokens:    ", labels)
-                    print("==========================\n")
 
 
             # Backward

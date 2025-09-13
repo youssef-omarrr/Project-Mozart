@@ -114,26 +114,19 @@ class MusicTokenEnforcementLoss(nn.Module):
         # Create a copy of logits to avoid modifying original in-place
         logits_masked = logits.clone()
 
-        # If there are any positions where we want to forbid non-music tokens, apply a large negative value
-        # We'll apply it only at valid_positions (i.e., where we actually expect the model to generate music).
-        # valid_positions is [B, S]; create an index for the flattened positions to update rows in logits
-        pos = valid_positions.view(-1)  # [B*S]
-        if pos.any():
-            # Flatten logits to shape [B*S, V] to index easily
-            flat_logits = logits_masked.view(-1, logits_masked.size(-1))  # [B*S, V]
-            # Set disallowed tokens to a very negative value (practically zero after softmax)
-            disallowed_idx = (~allowed_mask)
-            if disallowed_idx.any():
-                # Use advanced indexing to set columns to -1e9 for the selected rows
-                flat_logits[pos, :][:, disallowed_idx] = -1e9
-                # Write back
-                logits_masked = flat_logits.view_as(logits_masked)
+        # FIXED: Apply masking more aggressively
+        B, S, V = logits.shape
+        for b in range(B):
+            for s in range(S):
+                if valid_positions[b, s]:
+                    # Set non-music tokens to extremely negative logits
+                    logits_masked[b, s, ~allowed_mask] = -1e10  # More extreme than -1e9
 
         # ----------------- Cross-Entropy on masked logits (ignores -100) -----------------
         ce_loss = self.ce_loss(logits_masked.view(-1, logits_masked.size(-1)), labels.view(-1))
 
-        # ----------------- TOP-K penalty logic (robust version) on masked logits -----------------
-        topk_values, topk_indices = torch.topk(logits_masked, k=top_k, dim=-1)  # use masked logits
+        # ----------------- TOP-K penalty logic (robust version) on ORIGINAL logits -----------------
+        topk_values, topk_indices = torch.topk(logits, k=top_k, dim=-1)  # Use ORIGINAL logits for penalty
 
         # topk_is_non_music: True where top-k token is non-music (disallowed)
         topk_is_non_music = non_music_mask[topk_indices]  # shape: [B, S, k]

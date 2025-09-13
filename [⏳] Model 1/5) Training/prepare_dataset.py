@@ -60,6 +60,20 @@ def build_features(examples, tokenizer, mask_token_id, max_length=1024):
 
         labels.append(lbl)
         mask_positions.append(mask_pos)
+        
+        
+        
+    # Debug: Check mask positions
+    total_masks = sum(sum(mp) for mp in mask_positions)
+    print(f"🔍 Total mask positions created: {total_masks}")
+
+    if total_masks == 0:
+        print("❌ WARNING: No mask positions found! Check your <MASK> tokens.")
+        # Show a sample
+        print("Sample input:", inputs[0][:200])
+        print("Sample target:", targets[0][:200])
+        
+        
 
     return {
         "input_ids": input_ids,
