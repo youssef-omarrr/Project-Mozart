@@ -71,71 +71,98 @@ class MusicTokenEnforcementLoss(nn.Module):
         
         self.model_vocab_size = actual_vocab_size
     
-    def forward(self, logits, labels, attention_mask=None, mask_positions=None, top_k=5):        # Standard cross entropy loss - only compute where labels != -100
-        ce_loss = self.ce_loss(logits.view(-1, logits.size(-1)), labels.view(-1))
-        
+    def forward(self, logits, labels, attention_mask=None, mask_positions=None, top_k=5):
+        """
+        logits: [B, S, V]
+        labels: [B, S]  (-100 where ignored)
+        mask_positions: [B, S] bool indicating generation/mask positions
+        """
+
         # Initialize mask if not done yet or if vocab size changed
         actual_vocab_size = logits.size(-1)
         if self.non_music_mask is None or self.model_vocab_size != actual_vocab_size:
             self._initialize_mask(actual_vocab_size, logits.device)
-        
+
+        # Ensure non_music_mask is on the same device & dtype
+        non_music_mask = self.non_music_mask.to(logits.device)
+        # non_music_mask is True where penalty applies (1) and False for allowed tokens (0)
+        if non_music_mask.dtype != torch.bool:
+            non_music_mask = non_music_mask != 0
+
         # ****************** ROBUST VALID POSITIONS MASK ******************
-        # This is the most accurate way to find positions that are real data, not padding.
-        # 1. Start with the attention mask (1=real token, 0=padding)
         if attention_mask is None:
-            # If no mask provided, assume all positions are valid
-            valid_positions = torch.ones_like(labels, dtype=torch.bool)
+            valid_positions = torch.ones_like(labels, dtype=torch.bool, device=logits.device)
         else:
             valid_positions = (attention_mask == 1)
 
-        # 2. IMPORTANT: Also ignore positions where labels are -100 (the ignore_index)
-        # This is a standard practice in Hugging Face models.
         valid_positions = valid_positions & (labels != -100)
-        
-        # ****************** CRITICAL: ONLY AT MASK POSITIONS ******************
+
         if mask_positions is not None:
-            # Ensure mask_positions is on the same device and has same shape
             mask_positions = mask_positions.to(valid_positions.device)
             if mask_positions.shape != valid_positions.shape:
-                # Handle potential shape mismatch from padding
                 mask_positions = torch.nn.functional.pad(
-                    mask_positions, 
-                    (0, valid_positions.shape[1] - mask_positions.shape[1]), 
+                    mask_positions,
+                    (0, valid_positions.shape[1] - mask_positions.shape[1]),
                     value=False
                 )
             valid_positions = valid_positions & mask_positions
-            
-        # ****************** TOP-K PENALTY LOGIC ******************
-        # Get the top-k predicted token IDs and their values
-        topk_values, topk_indices = torch.topk(logits, k=top_k, dim=-1)  # shapes: [batch, seq, k]
-        
-        # Check if any of the top-k predictions are non-music tokens
-        expanded_mask = self.non_music_mask.unsqueeze(0).unsqueeze(0)
-        topk_is_non_music = expanded_mask[:, :, topk_indices]
-        
-        # Check if ANY of the top-k predictions are non-music: [batch, seq]
-        any_topk_non_music = topk_is_non_music.any(dim=-1)
-        
-        # Penalize only on valid positions (real tokens, not ignored by labels)
-        penalty_positions = (any_topk_non_music & valid_positions)
 
-        # Calculate the penalty loss based on the highest non-music probability in top-k
-        probs = torch.softmax(logits, dim=-1)
-        
-        # Get the maximum probability among non-music tokens in the top-k
-        non_music_in_topk = topk_is_non_music.float()
-        topk_probs = torch.softmax(topk_values, dim=-1)
-        max_non_music_prob = (topk_probs * non_music_in_topk).max(dim=-1)[0]
-        # Replace any zeros (where no non-music was in top-k) with a small value to avoid log(0)
+        # ----------------- HARD LOGITS MASK (disallow non-music tokens at valid positions) -----------------
+        # allowed_mask: True for allowed (music + specials), False for disallowed
+        allowed_mask = (~non_music_mask).to(torch.bool)  # shape: [V]
+
+        # Create a copy of logits to avoid modifying original in-place
+        logits_masked = logits.clone()
+
+        # If there are any positions where we want to forbid non-music tokens, apply a large negative value
+        # We'll apply it only at valid_positions (i.e., where we actually expect the model to generate music).
+        # valid_positions is [B, S]; create an index for the flattened positions to update rows in logits
+        pos = valid_positions.view(-1)  # [B*S]
+        if pos.any():
+            # Flatten logits to shape [B*S, V] to index easily
+            flat_logits = logits_masked.view(-1, logits_masked.size(-1))  # [B*S, V]
+            # Set disallowed tokens to a very negative value (practically zero after softmax)
+            disallowed_idx = (~allowed_mask)
+            if disallowed_idx.any():
+                # Use advanced indexing to set columns to -1e9 for the selected rows
+                flat_logits[pos, :][:, disallowed_idx] = -1e9
+                # Write back
+                logits_masked = flat_logits.view_as(logits_masked)
+
+        # ----------------- Cross-Entropy on masked logits (ignores -100) -----------------
+        ce_loss = self.ce_loss(logits_masked.view(-1, logits_masked.size(-1)), labels.view(-1))
+
+        # ----------------- TOP-K penalty logic (robust version) on masked logits -----------------
+        topk_values, topk_indices = torch.topk(logits_masked, k=top_k, dim=-1)  # use masked logits
+
+        # topk_is_non_music: True where top-k token is non-music (disallowed)
+        topk_is_non_music = non_music_mask[topk_indices]  # shape: [B, S, k]
+
+        any_topk_non_music = topk_is_non_music.any(dim=-1)  # [B, S]
+
+        # Probabilities among the k predictions (softmax across k)
+        topk_probs = torch.softmax(topk_values, dim=-1)  # [B, S, k]
+
+        non_music_mask_float = topk_is_non_music.float()
+        non_music_probs = topk_probs * non_music_mask_float
+        max_non_music_prob = non_music_probs.max(dim=-1)[0]  # [B, S]
+        max_non_music_prob = torch.where(any_topk_non_music, max_non_music_prob, torch.ones_like(max_non_music_prob))
         max_non_music_prob = torch.clamp(max_non_music_prob, min=1e-12)
-        
-        # Apply penalty
-        non_music_penalty_loss = (-torch.log(max_non_music_prob) * penalty_positions * self.non_music_penalty).mean()
+
+        penalty_positions = any_topk_non_music & valid_positions  # [B, S]
+        penalty_per_pos = -torch.log(max_non_music_prob) * self.non_music_penalty
+        penalty_per_pos = penalty_per_pos * penalty_positions.float()
+
+        num_penalized = penalty_positions.sum()
+        if num_penalized.item() > 0:
+            non_music_penalty_loss = penalty_per_pos.sum() / num_penalized.float()
+        else:
+            non_music_penalty_loss = torch.tensor(0.0, device=logits.device)
 
         total_loss = ce_loss + non_music_penalty_loss
-        
+
         return total_loss, {
             'ce_loss': ce_loss.item(),
             'non_music_penalty': non_music_penalty_loss.item(),
-            'non_music_predictions': penalty_positions.sum().item()
+            'non_music_predictions': int(num_penalized.item())
         }

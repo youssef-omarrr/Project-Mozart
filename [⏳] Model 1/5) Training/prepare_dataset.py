@@ -1,5 +1,6 @@
 from datasets import load_dataset
 from filter import is_music_token 
+import os
 
 # Paths to your processed train/test files
 TRAIN_INPUTS = "D:/Codess & Projects/Project Mozart/dataset/train_inputs.txt"
@@ -18,19 +19,54 @@ def pre_tokenize_musical_text(text: str) -> str:
     return " ".join(filtered)
 
 
-def enhance_dataset(dataset):
+def build_features(examples, tokenizer, mask_token_id, max_length=1024):
     """
-    Apply pre-tokenization to the entire dataset.
+    Build tokenized features from parallel input/target texts.
+    - input contains <MASK>
+    - target contains full notes
+    - labels are -100 except where <MASK> occurs
     """
-    def pre_tokenize_examples(examples):
-        return {"text": [pre_tokenize_musical_text(t) for t in examples["text"]]}
-    
-    return dataset.map(
-        pre_tokenize_examples,
-        batched=True,
-        desc="Pre-tokenizing musical data"
+    inputs = [pre_tokenize_musical_text(t) for t in examples["input"]]
+    targets = [pre_tokenize_musical_text(t) for t in examples["target"]]
+
+    enc_input = tokenizer(
+        inputs,
+        truncation=True,
+        max_length=max_length,
+        padding="max_length"
+    )
+    enc_target = tokenizer(
+        targets,
+        truncation=True,
+        max_length=max_length,
+        padding="max_length"
     )
 
+    input_ids = enc_input["input_ids"]
+    attention_mask = enc_input["attention_mask"]
+    target_ids = enc_target["input_ids"]
+
+    labels = []
+    mask_positions = []
+
+    for inp, tgt in zip(input_ids, target_ids):
+        lbl = [-100] * len(inp)
+        mask_pos = [0] * len(inp)
+
+        for i, tok in enumerate(inp):
+            if tok == mask_token_id:
+                lbl[i] = tgt[i]
+                mask_pos[i] = 1
+
+        labels.append(lbl)
+        mask_positions.append(mask_pos)
+
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "labels": labels,
+        "mask_positions": mask_positions,
+    }
 
 def prepare_dataset(tokenizer):
     """
@@ -46,64 +82,26 @@ def prepare_dataset(tokenizer):
         "test_target": TEST_TARGETS     # line 1 of targets should correspond to line 1 of inputs
     }
 
-    # Load raw text datasets
-    dataset = load_dataset("text", data_files=data_files)
-    
-    # CRITICAL: Verify input-target alignment
-    print(f"Train inputs: {len(dataset['train_input'])}")
-    print(f"Train targets: {len(dataset['train_target'])}")
-    print(f"Test inputs: {len(dataset['test_input'])}")
-    print(f"Test targets: {len(dataset['test_target'])}")
-    
-    # Sample check - first few lines should correspond
-    print("\nSample input:", dataset['train_input'][0]['text'][:100])
-    print("Sample target:", dataset['train_target'][0]['text'][:100])
-    
-    # Tokenize using tokenizer
-    def tokenize_input_fn(examples):
-        return tokenizer(
-            examples["text"],
-            truncation=True,
-            max_length=1024,
-            padding=False
+    # Load raw parallel datasets
+    raw_inputs = load_dataset("text", data_files={"train": data_files["train_input"], "test": data_files["test_input"]})
+    raw_targets = load_dataset("text", data_files={"train": data_files["train_target"], "test": data_files["test_target"]})
+
+    # Align inputs + targets into one dataset
+    dataset = {}
+    for split in ["train", "test"]:
+        dataset[split] = raw_inputs[split].add_column("target", raw_targets[split]["text"])
+        dataset[split] = dataset[split].rename_column("text", "input")
+
+    mask_token_id = tokenizer.convert_tokens_to_ids("<MASK>")
+
+    # Apply feature building
+    for split in ["train", "test"]:
+        dataset[split] = dataset[split].map(
+            lambda ex: build_features(ex, tokenizer, mask_token_id),
+            batched=True,
+            remove_columns=["input", "target"],
+            desc=f"Building {split} features",
+            num_proc=os.cpu_count()
         )
-    
-    def tokenize_target_fn(examples):
-        return tokenizer(
-            examples["text"], 
-            truncation=True,
-            max_length=1024,
-            padding=False
-        )
-    
-    tokenized = {}
-    tokenized["train_input"] = dataset["train_input"].map(
-        tokenize_input_fn,
-        batched=True,
-        remove_columns=["text"],
-        desc="Tokenizing train inputs"
-    )
-    
-    tokenized["train_target"] = dataset["train_target"].map(
-        tokenize_target_fn,
-        batched=True,
-        remove_columns=["text"],
-        desc="Tokenizing train targets"
-    )
-    
-    # Repeat for test
-    tokenized["test_input"] = dataset["test_input"].map(
-        tokenize_input_fn,
-        batched=True,
-        remove_columns=["text"],
-        desc="Tokenizing test inputs"
-    )
-    
-    tokenized["test_target"] = dataset["test_target"].map(
-        tokenize_target_fn,
-        batched=True,
-        remove_columns=["text"],
-        desc="Tokenizing test targets"
-    )
-    
-    return tokenized
+
+    return dataset

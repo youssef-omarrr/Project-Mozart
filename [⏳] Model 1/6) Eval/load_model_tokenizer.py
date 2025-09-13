@@ -32,8 +32,7 @@ def load_model_and_tokenizer(
                                         ).to(device)
 
     # Resize embeddings if tokenizer has added tokens
-    base_model.resize_token_embeddings(len(tokenizer),
-                                        mean_resizing=False)
+    base_model.resize_token_embeddings(len(tokenizer))
     
     # 3. Load LoRA with ignore_mismatched_sizes
     model = PeftModel.from_pretrained(
@@ -45,8 +44,7 @@ def load_model_and_tokenizer(
             
                 
     # Resize embeddings if tokenizer has added tokens
-    model.resize_token_embeddings(len(tokenizer),
-                                        mean_resizing=False)
+    model.resize_token_embeddings(len(tokenizer))
 
     
     # Only set to eval mode if NOT for training
