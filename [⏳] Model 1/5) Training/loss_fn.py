@@ -28,11 +28,12 @@ class MusicTokenEnforcementLoss(nn.Module):
         
         self.ce_loss = nn.CrossEntropyLoss(ignore_index=-100)
         
-        # These will be initialized during first forward pass
-        self.model_vocab_size = None
-        self.valid_music_ids = [i for i in music_token_ids if i >= 0]
+        # Use the actual vocabulary size including ALL added tokens
+        self.model_vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
+        self.valid_music_ids = [i for i in music_token_ids if i >= 0 and i < self.model_vocab_size]
         
         print(f"Initialized MusicTokenEnforcementLoss with {len(self.valid_music_ids)} valid music token IDs")
+        print(f"Model vocab size: {self.model_vocab_size}")
         
         # Get space token ID
         self.space_token_id = tokenizer.convert_tokens_to_ids(' ')
@@ -50,23 +51,23 @@ class MusicTokenEnforcementLoss(nn.Module):
         else:
             print("WARNING: Could not find space token ID")
         
-        # Define special tokens and their contexts
+        # Define special tokens and their contexts (update this list)
         self.special_tokens = {
-            '<|startofpiece|>': {'position': 'start', 'id': None},
-            '<|endofpiece|>': {'position': 'end', 'id': None},
-            '<TRACKS>': {'position': 'after_metadata', 'id': None},
-            '<TRACKSEP>': {'position': 'track_separator', 'id': None},
-            '<NAME=': {'position': 'metadata', 'id': None},
-            '<BPM=': {'position': 'metadata', 'id': None},
-            '<DURATION_': {'position': 'metadata', 'id': None},
+            '<|startofpiece|>': {'position': 'start', 'id': tokenizer.convert_tokens_to_ids('<|startofpiece|>')},
+            '<|endofpiece|>': {'position': 'end', 'id': tokenizer.convert_tokens_to_ids('<|endofpiece|>')},
+            '<TRACKS>': {'position': 'after_metadata', 'id': tokenizer.convert_tokens_to_ids('<TRACKS>')},
+            '<TRACKSEP>': {'position': 'track_separator', 'id': tokenizer.convert_tokens_to_ids('<TRACKSEP>')},
+            '<NAME=': {'position': 'metadata', 'id': tokenizer.convert_tokens_to_ids('<NAME=')},
+            '<BPM=': {'position': 'metadata', 'id': tokenizer.convert_tokens_to_ids('<BPM=')},
+            '<DURATION_BEATS=': {'position': 'metadata', 'id': tokenizer.convert_tokens_to_ids('<DURATION_BEATS=')},
+            '<DURATION_MINUTES=': {'position': 'metadata', 'id': tokenizer.convert_tokens_to_ids('<DURATION_MINUTES=')},
+            '<MASK>': {'position': 'mask', 'id': tokenizer.convert_tokens_to_ids('<MASK>')},
         }
         
-        # Get token IDs for special tokens
+        # Print special tokens
         for token, info in self.special_tokens.items():
-            token_id = tokenizer.convert_tokens_to_ids(token)
-            if token_id is not None and token_id != tokenizer.unk_token_id:
-                info['id'] = token_id
-                print(f"Special token: {token} (ID: {token_id})")
+            if info['id'] is not None:
+                print(f"Special token: {token} (ID: {info['id']})")
         
         # Always allowed tokens (padding, unknown, mask)
         self.always_allowed_tokens = set()
@@ -151,17 +152,21 @@ class MusicTokenEnforcementLoss(nn.Module):
         
         batch_size, seq_len = input_ids.shape
         
+        # Don't allow consecutive spaces
+        if position > 0 and input_ids[0, position-1].item() == self.space_token_id:
+            return False
+        
         # Look at previous and next tokens
         prev_token_id = input_ids[0, position-1].item() if position > 0 else None
         next_token_id = input_ids[0, position+1].item() if position < seq_len-1 else None
         
-        # Allow space if previous or next token is a music token
+        # Allow space only between music tokens
         music_token_set = set(self.valid_music_ids + self.rest_token_ids)
         
         prev_is_music = prev_token_id in music_token_set if prev_token_id is not None else False
         next_is_music = next_token_id in music_token_set if next_token_id is not None else False
         
-        return prev_is_music or next_is_music
+        return prev_is_music and next_is_music
     
     def _create_context_aware_mask(self, input_ids, device):
         """Create a context-aware mask for each position"""
@@ -172,6 +177,18 @@ class MusicTokenEnforcementLoss(nn.Module):
         position_masks = torch.zeros(batch_size, seq_len, vocab_size, device=device, dtype=torch.bool)
         
         for b in range(batch_size):
+            sequence_tokens = input_ids[b].tolist()
+            
+            # Find positions of special tokens
+            special_token_positions = {}
+            for token, info in self.special_tokens.items():
+                if info['id'] is not None:
+                    try:
+                        pos = sequence_tokens.index(info['id'])
+                        special_token_positions[token] = pos
+                    except ValueError:
+                        pass
+            
             for pos in range(seq_len):
                 context = self._get_context_type(input_ids[b:b+1], pos)
                 
@@ -179,26 +196,21 @@ class MusicTokenEnforcementLoss(nn.Module):
                 position_masks[b, pos, list(self.always_allowed_tokens)] = True
                 
                 if context == 'start':
-                    # Only allow <|startofpiece|>
-                    start_token_id = self.special_tokens['<|startofpiece|>']['id']
-                    if start_token_id is not None:
-                        position_masks[b, pos, start_token_id] = True
+                    # Only allow <|startofpiece|> at position 0
+                    if pos == 0:
+                        start_token_id = self.special_tokens['<|startofpiece|>']['id']
+                        if start_token_id is not None:
+                            position_masks[b, pos, start_token_id] = True
                 
                 elif context == 'end':
-                    # Only allow <|endofpiece|>
-                    end_token_id = self.special_tokens['<|endofpiece|>']['id']
-                    if end_token_id is not None:
-                        position_masks[b, pos, end_token_id] = True
+                    # Only allow <|endofpiece|> at the end
+                    if pos == seq_len - 1:
+                        end_token_id = self.special_tokens['<|endofpiece|>']['id']
+                        if end_token_id is not None:
+                            position_masks[b, pos, end_token_id] = True
                 
-                elif context == 'metadata':
-                    # Allow metadata tokens and their content
-                    for token, info in self.special_tokens.items():
-                        if info['position'] == 'metadata' and info['id'] is not None:
-                            position_masks[b, pos, info['id']] = True
-                    
-                    # Also allow alphanumeric characters, punctuation for metadata content
-                    # This is a simplified approach - you might want to be more specific
-                    
+                # Add similar strict rules for other special tokens... (if needed)
+                
                 elif context == 'after_metadata' or context == 'music_content':
                     # Allow music tokens
                     if self.valid_music_ids:
@@ -215,17 +227,8 @@ class MusicTokenEnforcementLoss(nn.Module):
                             position_masks[b, pos, valid_rest_indices] = True
                     
                     # Allow spaces between music notes
-                    if self._should_allow_space(input_ids, pos) and self.space_token_id is not None:
+                    if self._should_allow_space(input_ids[b:b+1], pos) and self.space_token_id is not None:
                         position_masks[b, pos, self.space_token_id] = True
-                
-                elif context == 'track_separator':
-                    # Allow <TRACKSEP> and track names
-                    tracksep_id = self.special_tokens['<TRACKSEP>']['id']
-                    if tracksep_id is not None:
-                        position_masks[b, pos, tracksep_id] = True
-                    
-                    # Allow instrument names (simplified - you might want to be more specific)
-                    # This would need to be expanded based on your specific instrument tokens
         
         return position_masks
     

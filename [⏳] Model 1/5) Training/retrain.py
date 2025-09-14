@@ -57,12 +57,16 @@ def get_music_token_ids(tokenizer):
     
     for note in MUSIC_NOTES:
         tid = tokenizer.convert_tokens_to_ids(note)
-        if tid is None or tid < 0 or tid >= vocab_size:
-            missing_tokens.append((note, tid))
-        else:
+        # Check if token exists in the expanded vocabulary
+        if tid is not None and tid != tokenizer.unk_token_id and tid < vocab_size:
             ids.append(int(tid))
+        else:
+            missing_tokens.append((note, tid))
+    
     if missing_tokens:
         print(f"[WARN] Some MUSIC_NOTES missing in tokenizer: {missing_tokens[:10]} (showing up to 10), total of {len(missing_tokens)}")
+    
+    print(f"Found {len(ids)} music token IDs")
     return ids
 
 
