@@ -11,8 +11,6 @@ TEST_TARGETS = "D:/Codess & Projects/Project Mozart/dataset/test_targets.txt"
 def pre_tokenize_musical_text(text: str) -> str:
     """
     FIXED: More careful pre-tokenization that preserves ALL special tokens and music tokens.
-    The issue was that only tokens starting with '<' were being preserved, but many
-    metadata tokens (like numbers, punctuation) were being filtered out.
     """
     tokens = text.split()
     filtered = []
@@ -21,30 +19,47 @@ def pre_tokenize_musical_text(text: str) -> str:
         # Keep music tokens
         if is_music_token(tok):
             filtered.append(tok)
-        # Keep ALL special tokens (not just those starting with '<')
+        # Keep ALL special tokens (including those combined with other content)
+        elif "<|endofpiece|>" in tok:
+            # Handle tokens that have content before the end marker
+            filtered.append(tok)
         elif tok.startswith("<") and tok.endswith(">"):
             filtered.append(tok)
-        # CRITICAL FIX: Keep metadata tokens that are part of the structure
-        elif any(meta in tok for meta in ["<NAME=", "<BPM=", "<DURATION_", "StringInstrument_", "_", ":", "="]):
+        # Keep tokens that contain special patterns
+        elif any(pattern in tok for pattern in ["<NAME=", "<BPM=", "<DURATION_", "StringInstrument_", 
+                                              "Violin", "Piano", "Clarinet", "Flute", "Cor", "Pianoforte",
+                                              "1st", "2nd", "Solo"]):
             filtered.append(tok)
-        # Keep individual characters/numbers that are part of metadata
-        elif tok in "0123456789.,-_: =":
+        # Keep tokens that contain musical notation patterns
+        elif any(c in tok for c in ["_", ":", "=", "-", "#", "&", "@", "."]):
             filtered.append(tok)
-        # Keep alphabetic parts of metadata
-        elif len(tok) <= 10 and (tok.isalnum() or any(c in tok for c in ".,#-_")):
+        # Keep numbers and basic punctuation
+        elif tok.isdigit() or tok in [".", ",", "-", "_", ":", "=", "&", "@"]:
             filtered.append(tok)
+        # Keep email addresses and other metadata
+        elif "@" in tok and "." in tok:  # Likely email addresses
+            filtered.append(tok)
+        # Keep quoted text (like "The")
+        elif tok.startswith('"') and tok.endswith('"'):
+            filtered.append(tok)
+        # Keep short alphanumeric tokens that might be part of metadata
+        elif len(tok) <= 20 and (tok.isalnum() or any(c in tok for c in ".,#-_&@\"'")):
+            filtered.append(tok)
+        else:
+            # Debug what we're filtering out
+            print(f"Filtering out: '{tok}'")
     
     result = " ".join(filtered)
     
-    # Debug: Show what was kept vs removed
+    # Only show warnings for significant filtering
     original_tokens = text.split()
     filtered_tokens = result.split()
     
-    if len(original_tokens) != len(filtered_tokens):
+    if len(original_tokens) != len(filtered_tokens) and len(original_tokens) > 10:
         print(f"WARNING: Token count changed from {len(original_tokens)} to {len(filtered_tokens)}")
         removed = set(original_tokens) - set(filtered_tokens)
         if removed:
-            print(f"  Removed tokens (first 10): {list(removed)[:10]}")
+            print(f"  Removed tokens (first 5): {list(removed)[:5]}")
     
     return result
 
@@ -58,8 +73,8 @@ def build_features(examples, tokenizer, mask_token_id, max_length=1024):
     targets = [pre_tokenize_musical_text(t) for t in examples["target"]]
     
     # Debug first few examples
-    print(f"\nDEBUG: First input after preprocessing: {inputs[0][:200]}...")
-    print(f"DEBUG: First target after preprocessing: {targets[0][:200]}...")
+    # print(f"\nDEBUG: First input after preprocessing: {inputs[0][:200]}...")
+    # print(f"DEBUG: First target after preprocessing: {targets[0][:200]}...")
 
     enc_input = tokenizer(
         inputs,
@@ -107,18 +122,18 @@ def build_features(examples, tokenizer, mask_token_id, max_length=1024):
         
         # Debug first sequence
         if len(labels) == 1:
-            print(f"DEBUG: First sequence mask positions: {sum(mask_pos)}")
+            # print(f"DEBUG: First sequence mask positions: {sum(mask_pos)}")
             mask_indices = [i for i, m in enumerate(mask_pos) if m == 1]
-            print(f"DEBUG: Mask indices: {mask_indices}")
+            # print(f"DEBUG: Mask indices: {mask_indices}")
             for idx in mask_indices[:5]:  # Show first 5
                 if idx < len(tgt):
                     expected_token = tokenizer.convert_ids_to_tokens([tgt[idx]])[0]
-                    print(f"  Position {idx}: Should predict '{expected_token}'")
+                    # print(f"  Position {idx}: Should predict '{expected_token}'")
         
-    print(f"PREPROCESSING SUMMARY:")
-    print(f"  Total sequences: {total_sequences}")
-    print(f"  Total mask tokens found: {total_mask_tokens_found}")
-    print(f"  Average masks per sequence: {total_mask_tokens_found / total_sequences:.2f}")
+    # print(f"PREPROCESSING SUMMARY:")
+    # print(f"  Total sequences: {total_sequences}")
+    # print(f"  Total mask tokens found: {total_mask_tokens_found}")
+    # print(f"  Average masks per sequence: {total_mask_tokens_found / total_sequences:.2f}")
 
     if total_mask_tokens_found == 0:
         print("❌ CRITICAL ERROR: No mask positions found!")
