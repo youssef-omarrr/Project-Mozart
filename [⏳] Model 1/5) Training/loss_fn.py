@@ -3,6 +3,7 @@
 ############################################################
 import torch
 import torch.nn as nn
+import re
 
 from filter import is_music_token
 
@@ -29,14 +30,50 @@ class MusicTokenEnforcementLoss(nn.Module):
         
         # These will be initialized during first forward pass
         self.model_vocab_size = None
-        self.non_music_mask = None
         self.valid_music_ids = [i for i in music_token_ids if i >= 0]
         
         print(f"Initialized MusicTokenEnforcementLoss with {len(self.valid_music_ids)} valid music token IDs")
         
-        # USE THE CANONICAL LIST OF SPECIAL TOKENS FROM THE TOKENIZER
-        # This is more reliable than manually searching
-        self.special_token_ids = tokenizer.all_special_ids
+        # Get space token ID
+        self.space_token_id = tokenizer.convert_tokens_to_ids(' ')
+        if self.space_token_id is None or self.space_token_id == tokenizer.unk_token_id:
+            # Try alternative space representations
+            for space_variant in [' ', 'Ġ', 'Ä', 'Ä ']:
+                space_id = tokenizer.convert_tokens_to_ids(space_variant)
+                if space_id is not None and space_id != tokenizer.unk_token_id:
+                    self.space_token_id = space_id
+                    print(f"Found space token: '{space_variant}' (ID: {space_id})")
+                    break
+        
+        if self.space_token_id is not None:
+            print(f"Space token ID: {self.space_token_id}")
+        else:
+            print("WARNING: Could not find space token ID")
+        
+        # Define special tokens and their contexts
+        self.special_tokens = {
+            '<|startofpiece|>': {'position': 'start', 'id': None},
+            '<|endofpiece|>': {'position': 'end', 'id': None},
+            '<TRACKS>': {'position': 'after_metadata', 'id': None},
+            '<TRACKSEP>': {'position': 'track_separator', 'id': None},
+            '<NAME=': {'position': 'metadata', 'id': None},
+            '<BPM=': {'position': 'metadata', 'id': None},
+            '<DURATION_': {'position': 'metadata', 'id': None},
+        }
+        
+        # Get token IDs for special tokens
+        for token, info in self.special_tokens.items():
+            token_id = tokenizer.convert_tokens_to_ids(token)
+            if token_id is not None and token_id != tokenizer.unk_token_id:
+                info['id'] = token_id
+                print(f"Special token: {token} (ID: {token_id})")
+        
+        # Always allowed tokens (padding, unknown, mask)
+        self.always_allowed_tokens = set()
+        for token in ['<pad>', '<unk>', '<MASK>']:
+            token_id = tokenizer.convert_tokens_to_ids(token)
+            if token_id is not None and token_id != tokenizer.unk_token_id:
+                self.always_allowed_tokens.add(token_id)
         
         # Identify rest token IDs
         self.rest_token_ids = []
@@ -48,47 +85,163 @@ class MusicTokenEnforcementLoss(nn.Module):
         except Exception as e:
             print(f"Warning: Could not process rest tokens: {e}")
         
-        print(f"Found {len(self.rest_token_ids)} rest tokens and {len(self.special_token_ids)} special tokens")
+        print(f"Found {len(self.rest_token_ids)} rest tokens")
+        print(f"Always allowed tokens: {len(self.always_allowed_tokens)}")
     
-    def _initialize_mask(self, actual_vocab_size, device):
-        """Initialize the non-music mask based on actual vocabulary size"""
-        print(f"Initializing mask with vocab size: {actual_vocab_size}")
+    def _get_context_type(self, input_ids, position):
+        """
+        Determine what type of content should come at this position
+        Returns: 'start', 'metadata', 'after_metadata', 'music_content', 'track_separator', 'end'
+        """
+        batch_size, seq_len = input_ids.shape
         
-        # Create mask for non-music tokens using actual model vocab size
-        self.non_music_mask = torch.ones(actual_vocab_size, device=device)
+        # Convert tensor to list for easier processing
+        if position >= seq_len:
+            return 'end'
         
-        # Set music tokens to 0 (no penalty)
-        valid_music_ids = [i for i in self.valid_music_ids if 0 <= i < actual_vocab_size]
-        if valid_music_ids:
-            self.non_music_mask[valid_music_ids] = 0
-            print(f"Set {len(valid_music_ids)} music tokens to no penalty")
+        # Look at surrounding context
+        context_window = 10
+        start_pos = max(0, position - context_window)
+        end_pos = min(seq_len, position + context_window)
         
-        # Set special tokens to 0 (no penalty)
-        valid_special_ids = [i for i in self.special_token_ids if 0 <= i < actual_vocab_size]
-        if valid_special_ids:
-            self.non_music_mask[valid_special_ids] = 0
-            print(f"Set {len(valid_special_ids)} special tokens to no penalty")
+        context_ids = input_ids[0, start_pos:end_pos].tolist()  # Use first batch for context
+        context_tokens = self.tokenizer.convert_ids_to_tokens(context_ids)
         
-        self.model_vocab_size = actual_vocab_size
+        # Check if we're at the start
+        if position == 0 or (position < 3 and any('<|startofpiece|>' in str(t) for t in context_tokens)):
+            return 'start'
+        
+        # Check if we're at the end
+        if any('<|endofpiece|>' in str(t) for t in context_tokens[-3:]):
+            return 'end'
+        
+        # Check if we're in metadata section
+        if any(meta in str(t) for t in context_tokens for meta in ['<NAME=', '<BPM=', '<DURATION_']):
+            return 'metadata'
+        
+        # Check if we just passed <TRACKS>
+        tracks_positions = [i for i, t in enumerate(context_tokens) if '<TRACKS>' in str(t)]
+        if tracks_positions and position > start_pos + tracks_positions[-1]:
+            # We're after <TRACKS>, check if we're near <TRACKSEP>
+            if any('<TRACKSEP>' in str(t) for t in context_tokens):
+                return 'track_separator'
+            else:
+                return 'music_content'
+        
+        # Check if we're near track separator
+        if any('<TRACKSEP>' in str(t) for t in context_tokens):
+            return 'track_separator'
+        
+        # Default to music content if we can't determine
+        return 'music_content'
+    
+    def _is_music_sequence_context(self, input_ids, position):
+        """Check if we're in a position where music notes should appear"""
+        context = self._get_context_type(input_ids, position)
+        return context in ['music_content', 'after_metadata']
+    
+    def _should_allow_space(self, input_ids, position):
+        """Determine if space should be allowed at this position"""
+        if self.space_token_id is None:
+            return False
+        
+        # Only allow spaces in music content areas
+        if not self._is_music_sequence_context(input_ids, position):
+            return False
+        
+        batch_size, seq_len = input_ids.shape
+        
+        # Look at previous and next tokens
+        prev_token_id = input_ids[0, position-1].item() if position > 0 else None
+        next_token_id = input_ids[0, position+1].item() if position < seq_len-1 else None
+        
+        # Allow space if previous or next token is a music token
+        music_token_set = set(self.valid_music_ids + self.rest_token_ids)
+        
+        prev_is_music = prev_token_id in music_token_set if prev_token_id is not None else False
+        next_is_music = next_token_id in music_token_set if next_token_id is not None else False
+        
+        return prev_is_music or next_is_music
+    
+    def _create_context_aware_mask(self, input_ids, device):
+        """Create a context-aware mask for each position"""
+        batch_size, seq_len = input_ids.shape
+        vocab_size = self.model_vocab_size
+        
+        # Create per-position masks [batch_size, seq_len, vocab_size]
+        position_masks = torch.zeros(batch_size, seq_len, vocab_size, device=device, dtype=torch.bool)
+        
+        for b in range(batch_size):
+            for pos in range(seq_len):
+                context = self._get_context_type(input_ids[b:b+1], pos)
+                
+                # Always allow certain tokens
+                position_masks[b, pos, list(self.always_allowed_tokens)] = True
+                
+                if context == 'start':
+                    # Only allow <|startofpiece|>
+                    start_token_id = self.special_tokens['<|startofpiece|>']['id']
+                    if start_token_id is not None:
+                        position_masks[b, pos, start_token_id] = True
+                
+                elif context == 'end':
+                    # Only allow <|endofpiece|>
+                    end_token_id = self.special_tokens['<|endofpiece|>']['id']
+                    if end_token_id is not None:
+                        position_masks[b, pos, end_token_id] = True
+                
+                elif context == 'metadata':
+                    # Allow metadata tokens and their content
+                    for token, info in self.special_tokens.items():
+                        if info['position'] == 'metadata' and info['id'] is not None:
+                            position_masks[b, pos, info['id']] = True
+                    
+                    # Also allow alphanumeric characters, punctuation for metadata content
+                    # This is a simplified approach - you might want to be more specific
+                    
+                elif context == 'after_metadata' or context == 'music_content':
+                    # Allow music tokens
+                    if self.valid_music_ids:
+                        valid_music_tensor = torch.tensor(self.valid_music_ids, device=device)
+                        valid_indices = valid_music_tensor[valid_music_tensor < vocab_size]
+                        if len(valid_indices) > 0:
+                            position_masks[b, pos, valid_indices] = True
+                    
+                    # Allow rest tokens
+                    if self.rest_token_ids:
+                        valid_rest_tensor = torch.tensor(self.rest_token_ids, device=device)
+                        valid_rest_indices = valid_rest_tensor[valid_rest_tensor < vocab_size]
+                        if len(valid_rest_indices) > 0:
+                            position_masks[b, pos, valid_rest_indices] = True
+                    
+                    # Allow spaces between music notes
+                    if self._should_allow_space(input_ids, pos) and self.space_token_id is not None:
+                        position_masks[b, pos, self.space_token_id] = True
+                
+                elif context == 'track_separator':
+                    # Allow <TRACKSEP> and track names
+                    tracksep_id = self.special_tokens['<TRACKSEP>']['id']
+                    if tracksep_id is not None:
+                        position_masks[b, pos, tracksep_id] = True
+                    
+                    # Allow instrument names (simplified - you might want to be more specific)
+                    # This would need to be expanded based on your specific instrument tokens
+        
+        return position_masks
     
     def forward(self, logits, labels, attention_mask=None, mask_positions=None, top_k=5):
         """
-        logits: [B, S, V]
-        labels: [B, S]  (-100 where ignored)
-        mask_positions: [B, S] bool indicating generation/mask positions
+        Enhanced forward pass with context-aware token restrictions
         """
-
         # Initialize mask if not done yet or if vocab size changed
         actual_vocab_size = logits.size(-1)
-        if self.non_music_mask is None or self.model_vocab_size != actual_vocab_size:
-            self._initialize_mask(actual_vocab_size, logits.device)
+        if self.model_vocab_size != actual_vocab_size:
+            self.model_vocab_size = actual_vocab_size
+            print(f"Updated model vocab size to: {actual_vocab_size}")
 
-        # Ensure non_music_mask is on the same device & dtype
-        non_music_mask = self.non_music_mask.to(logits.device)
-        # non_music_mask is True where penalty applies (1) and False for allowed tokens (0)
-        if non_music_mask.dtype != torch.bool:
-            non_music_mask = non_music_mask != 0
-
+        # Get input_ids from the model (this is a simplification - you might need to pass this explicitly)
+        # For now, we'll use a simpler approach that focuses on valid positions
+        
         # ****************** ROBUST VALID POSITIONS MASK ******************
         if attention_mask is None:
             valid_positions = torch.ones_like(labels, dtype=torch.bool, device=logits.device)
@@ -107,55 +260,108 @@ class MusicTokenEnforcementLoss(nn.Module):
                 )
             valid_positions = valid_positions & mask_positions
 
-        # ----------------- HARD LOGITS MASK (disallow non-music tokens at valid positions) -----------------
-        # allowed_mask: True for allowed (music + specials), False for disallowed
-        allowed_mask = (~non_music_mask).to(torch.bool)  # shape: [V]
+        # Create basic allowed mask (music tokens + essential tokens)
+        allowed_mask = torch.zeros(actual_vocab_size, device=logits.device, dtype=torch.bool)
+        
+        # Allow music tokens
+        if self.valid_music_ids:
+            valid_music_tensor = torch.tensor(self.valid_music_ids, device=logits.device)
+            valid_indices = valid_music_tensor[valid_music_tensor < actual_vocab_size]
+            if len(valid_indices) > 0:
+                allowed_mask[valid_indices] = True
+        
+        # Allow rest tokens
+        if self.rest_token_ids:
+            valid_rest_tensor = torch.tensor(self.rest_token_ids, device=logits.device)
+            valid_rest_indices = valid_rest_tensor[valid_rest_tensor < actual_vocab_size]
+            if len(valid_rest_indices) > 0:
+                allowed_mask[valid_rest_indices] = True
+        
+        # Allow space tokens (conditionally)
+        if self.space_token_id is not None and self.space_token_id < actual_vocab_size:
+            allowed_mask[self.space_token_id] = True
+        
+        # Allow always allowed tokens
+        for token_id in self.always_allowed_tokens:
+            if token_id < actual_vocab_size:
+                allowed_mask[token_id] = True
+        
+        # CONDITIONALLY allow special tokens (this is simplified - ideally you'd want position-aware logic)
+        for token, info in self.special_tokens.items():
+            if info['id'] is not None and info['id'] < actual_vocab_size:
+                # For now, allow special tokens but penalize them heavily in wrong contexts
+                allowed_mask[info['id']] = True
 
-        # Create a copy of logits to avoid modifying original in-place
+        # Create masked logits
         logits_masked = logits.clone()
-
-        # FIXED: Apply masking more aggressively
         B, S, V = logits.shape
+        
         for b in range(B):
             for s in range(S):
                 if valid_positions[b, s]:
-                    # Set non-music tokens to extremely negative logits
-                    logits_masked[b, s, ~allowed_mask] = -1e10  # More extreme than -1e9
+                    # Apply basic mask
+                    logits_masked[b, s, ~allowed_mask] = -1e12
+                    
+                    # Boost music tokens
+                    if self.valid_music_ids:
+                        music_ids_tensor = torch.tensor(self.valid_music_ids, device=logits.device)
+                        valid_music_mask = music_ids_tensor < V
+                        if valid_music_mask.any():
+                            valid_music_ids_filtered = music_ids_tensor[valid_music_mask]
+                            logits_masked[b, s, valid_music_ids_filtered] += 2.0  # Stronger boost
+                    
+                    # Penalize special tokens in wrong contexts (simplified logic)
+                    # In a full implementation, you'd use the context analysis here
+                    for token, info in self.special_tokens.items():
+                        if info['id'] is not None and info['id'] < V:
+                            # Apply context penalty (simplified)
+                            if token in ['<|startofpiece|>', '<|endofpiece|>'] and s not in [0, S-1]:
+                                logits_masked[b, s, info['id']] -= 5.0
+                            elif token == '<TRACKS>' and s < S//4:  # Rough heuristic
+                                logits_masked[b, s, info['id']] -= 3.0
 
-        # ----------------- Cross-Entropy on masked logits (ignores -100) -----------------
+        # Cross-Entropy Loss
         ce_loss = self.ce_loss(logits_masked.view(-1, logits_masked.size(-1)), labels.view(-1))
 
-        # ----------------- TOP-K penalty logic (robust version) on ORIGINAL logits -----------------
-        topk_values, topk_indices = torch.topk(logits, k=top_k, dim=-1)  # Use ORIGINAL logits for penalty
+        # Enhanced penalty system
+        topk_values, topk_indices = torch.topk(logits, k=top_k, dim=-1)
+        topk_not_allowed = ~allowed_mask[topk_indices]
+        any_topk_not_allowed = topk_not_allowed.any(dim=-1)
 
-        # topk_is_non_music: True where top-k token is non-music (disallowed)
-        topk_is_non_music = non_music_mask[topk_indices]  # shape: [B, S, k]
+        topk_probs = torch.softmax(topk_values, dim=-1)
+        not_allowed_probs = topk_probs * topk_not_allowed.float()
+        max_not_allowed_prob = not_allowed_probs.max(dim=-1)[0]
+        max_not_allowed_prob = torch.where(any_topk_not_allowed, max_not_allowed_prob, torch.ones_like(max_not_allowed_prob))
+        max_not_allowed_prob = torch.clamp(max_not_allowed_prob, min=1e-12)
 
-        any_topk_non_music = topk_is_non_music.any(dim=-1)  # [B, S]
-
-        # Probabilities among the k predictions (softmax across k)
-        topk_probs = torch.softmax(topk_values, dim=-1)  # [B, S, k]
-
-        non_music_mask_float = topk_is_non_music.float()
-        non_music_probs = topk_probs * non_music_mask_float
-        max_non_music_prob = non_music_probs.max(dim=-1)[0]  # [B, S]
-        max_non_music_prob = torch.where(any_topk_non_music, max_non_music_prob, torch.ones_like(max_non_music_prob))
-        max_non_music_prob = torch.clamp(max_non_music_prob, min=1e-12)
-
-        penalty_positions = any_topk_non_music & valid_positions  # [B, S]
-        penalty_per_pos = -torch.log(max_non_music_prob) * self.non_music_penalty
+        penalty_positions = any_topk_not_allowed & valid_positions
+        penalty_per_pos = -torch.log(max_not_allowed_prob) * self.non_music_penalty
         penalty_per_pos = penalty_per_pos * penalty_positions.float()
 
         num_penalized = penalty_positions.sum()
         if num_penalized.item() > 0:
-            non_music_penalty_loss = penalty_per_pos.sum() / num_penalized.float()
+            penalty_loss = penalty_per_pos.sum() / num_penalized.float()
         else:
-            non_music_penalty_loss = torch.tensor(0.0, device=logits.device)
+            penalty_loss = torch.tensor(0.0, device=logits.device)
 
-        total_loss = ce_loss + non_music_penalty_loss
+        total_loss = ce_loss + penalty_loss
+
+        # Debug output (reduced frequency)
+        if valid_positions.any() and torch.rand(1).item() < 0.05:  # 5% of the time
+            b, s = torch.where(valid_positions)[0][0], torch.where(valid_positions)[1][0]
+            
+            top_vals, top_ids = torch.topk(logits_masked[b, s], k=5)
+            print(f"\nDEBUG: Top 5 predictions at position ({b},{s}):")
+            for val, idx in zip(top_vals, top_ids):
+                token = self.tokenizer.convert_ids_to_tokens([idx.item()])[0]
+                is_allowed = allowed_mask[idx.item()].item()
+                is_music = idx.item() in self.valid_music_ids
+                is_space = idx.item() == self.space_token_id
+                token_type = "MUSIC" if is_music else ("SPACE" if is_space else "OTHER")
+                print(f"  {token} (ID: {idx.item()}): {val.item():.3f} [{token_type}, allowed: {is_allowed}]")
 
         return total_loss, {
             'ce_loss': ce_loss.item(),
-            'non_music_penalty': non_music_penalty_loss.item(),
+            'non_music_penalty': penalty_loss.item(),
             'non_music_predictions': int(num_penalized.item())
         }

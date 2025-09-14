@@ -43,8 +43,8 @@ def load_model_and_tokenizer(
         ).to(device)
             
                 
-    # Resize embeddings if tokenizer has added tokens
-    model.resize_token_embeddings(len(tokenizer))
+    # # Resize embeddings if tokenizer has added tokens
+    # model.resize_token_embeddings(len(tokenizer))
 
     
     # Only set to eval mode if NOT for training

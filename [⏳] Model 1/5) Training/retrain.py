@@ -22,7 +22,7 @@ OUTPUT_DIR = "../../MODELS/Project_Mozart_bart-small"
 EPOCHS = 5
 PER_DEVICE_TRAIN_BATCH_SIZE = 2
 GRAD_ACCUM_STEPS = 8
-LEARNING_RATE = 3e-5  # Much lower than 1.5e-4
+LEARNING_RATE = 1e-5  # Even lower learning rate
 WEIGHT_DECAY = 0.01
 WARMUP_STEPS = 500
 
@@ -101,9 +101,9 @@ def train_loop(model, tokenizer, tokenized):
     MUSIC_TOKEN_IDS = get_music_token_ids(tokenizer)
     print(f"Found {len(MUSIC_TOKEN_IDS)} music token IDs\n")
 
-    # Loss function
+    # CRITICAL FIX: Much higher penalty to force music token selection
     custom_loss_fn = MusicTokenEnforcementLoss(
-        tokenizer, MUSIC_TOKEN_IDS, non_music_penalty=5000.0
+        tokenizer, MUSIC_TOKEN_IDS, non_music_penalty=50000.0  # Increased penalty
     )
 
     # Unified dataloaders
@@ -142,42 +142,51 @@ def train_loop(model, tokenizer, tokenized):
     global_step = 0
     model.train()
     
-    # --------------------------------------------------------------------------------------------------- #
-    # print("\n🧪 TESTING LOSS FUNCTION:")
-    # # Get one batch for testing
-    # test_batch = next(iter(train_dataloader))
-    # test_batch = {k: v.to(DEVICE) for k, v in test_batch.items()}
+    # TEST THE LOSS FUNCTION FIRST
+    print("\n🧪 TESTING LOSS FUNCTION ON FIRST BATCH:")
+    test_batch = next(iter(train_dataloader))
+    test_batch = {k: v.to(DEVICE) for k, v in test_batch.items()}
 
-    # # Forward pass
-    # with torch.no_grad():
-    #     test_outputs = model(**{k: v for k, v in test_batch.items() if k in ['input_ids', 'attention_mask', 'labels']})
+    with torch.no_grad():
+        test_outputs = model(**{k: v for k, v in test_batch.items() if k in ['input_ids', 'attention_mask', 'labels']})
         
-    #     # Test loss function
-    #     test_loss, test_components = custom_loss_fn(
-    #         test_outputs.logits,
-    #         test_batch["labels"],
-    #         test_batch["attention_mask"],
-    #         mask_positions=test_batch["mask_positions"]
-    #     )
+        # Test loss function
+        test_loss, test_components = custom_loss_fn(
+            test_outputs.logits,
+            test_batch["labels"],
+            test_batch["attention_mask"],
+            mask_positions=test_batch["mask_positions"]
+        )
         
-    #     print(f"Test loss: {test_loss.item():.4f}")
-    #     print(f"Test components: {test_components}")
+        print(f"Test loss: {test_loss.item():.4f}")
+        print(f"Test components: {test_components}")
         
-    #     # Check if loss function is actually constraining
-    #     pred_ids = test_outputs.logits.argmax(dim=-1)
-    #     mask_pos = test_batch["mask_positions"].bool()
+        # Check predictions
+        pred_ids = test_outputs.logits.argmax(dim=-1)
+        mask_pos = test_batch["mask_positions"].bool()
         
-    #     if mask_pos.sum().item() > 0:
-    #         masked_preds = pred_ids[mask_pos]
-    #         music_token_set = set(MUSIC_TOKEN_IDS)
-    #         music_count = sum(1 for pid in masked_preds if pid.item() in music_token_set)
-    #         total_preds = masked_preds.numel()
+        if mask_pos.sum().item() > 0:
+            masked_preds = pred_ids[mask_pos]
+            music_token_set = set(MUSIC_TOKEN_IDS)
             
-    #         print(f"Music predictions: {music_count}/{total_preds} ({music_count/total_preds*100:.1f}%)")
+            # Count different types of predictions
+            eos_count = sum(1 for pid in masked_preds if pid.item() == tokenizer.eos_token_id)
+            music_count = sum(1 for pid in masked_preds if pid.item() in music_token_set)
+            other_count = masked_preds.numel() - eos_count - music_count
+            
+            print(f"Predictions breakdown:")
+            print(f"  Music tokens: {music_count}/{masked_preds.numel()} ({music_count/masked_preds.numel()*100:.1f}%)")
+            print(f"  </s> tokens: {eos_count}/{masked_preds.numel()} ({eos_count/masked_preds.numel()*100:.1f}%)")
+            print(f"  Other tokens: {other_count}/{masked_preds.numel()} ({other_count/masked_preds.numel()*100:.1f}%)")
+            
+            # Show some example predictions
+            print("First 10 predictions:")
+            for i, pid in enumerate(masked_preds[:10]):
+                token = tokenizer.decode([pid.item()])
+                token_type = "MUSIC" if pid.item() in music_token_set else ("EOS" if pid.item() == tokenizer.eos_token_id else "OTHER")
+                print(f"  {i}: '{token}' ({token_type})")
         
-    # print("=" * 50)
-    # --------------------------------------------------------------------------------------------------- #
-    
+    print("=" * 80)
 
     for epoch in range(EPOCHS):
         epoch_loss = 0.0
@@ -195,30 +204,20 @@ def train_loop(model, tokenizer, tokenized):
                     labels=batch["labels"],
                 )
                 
-                # --------------------------------------------------------------------------------------------------- #
-                if step == 0 and epoch == 0:  # Only debug first step
-                    print("\n🔍 DEBUGGING PREDICTIONS:")
-                    
-                    # Get predictions
-                    pred_ids = outputs.logits.argmax(dim=-1)  # [B, S]
-                    mask_pos = batch["mask_positions"].bool()  # [B, S]
-                    
-                    print(f"Mask positions found: {mask_pos.sum().item()}")
-                    
-                    if mask_pos.sum().item() > 0:
-                        # Get predictions at mask positions
-                        masked_preds = pred_ids[mask_pos][:10]  # First 10 predictions
-                        masked_labels = batch["labels"][mask_pos][:10]  # First 10 labels
+                # Debug predictions every 100 steps
+                if step % 100 == 0:
+                    with torch.no_grad():
+                        pred_ids = outputs.logits.argmax(dim=-1)
+                        mask_pos = batch["mask_positions"].bool()
                         
-                        print("First 10 predictions at mask positions:")
-                        for i, (pred_id, label_id) in enumerate(zip(masked_preds, masked_labels)):
-                            pred_token = tokenizer.decode([pred_id.item()])
-                            label_token = tokenizer.decode([label_id.item()]) if label_id.item() != -100 else "N/A"
-                            print(f"  {i}: Pred='{pred_token}' | Label='{label_token}'")
-                    else:
-                        print("❌ NO MASK POSITIONS FOUND!")
-                    print("=" * 50)
-                # --------------------------------------------------------------------------------------------------- #
+                        if mask_pos.sum().item() > 0:
+                            masked_preds = pred_ids[mask_pos]
+                            music_token_set = set(MUSIC_TOKEN_IDS)
+                            
+                            eos_count = sum(1 for pid in masked_preds if pid.item() == tokenizer.eos_token_id)
+                            music_count = sum(1 for pid in masked_preds if pid.item() in music_token_set)
+                            
+                            print(f"\nStep {step} predictions: Music={music_count}/{masked_preds.numel()}, EOS={eos_count}/{masked_preds.numel()}")
                 
                 total_loss, loss_components = custom_loss_fn(
                     outputs.logits,
@@ -226,7 +225,6 @@ def train_loop(model, tokenizer, tokenized):
                     batch["attention_mask"],
                     mask_positions=batch["mask_positions"],
                 )
-
 
             # Backward
             loss_reduced = total_loss / GRAD_ACCUM_STEPS
@@ -267,38 +265,32 @@ def train_loop(model, tokenizer, tokenized):
                     print(f"\nSaved Model and tokenizer checkpoint at step {global_step}")
 
                 if global_step % EVAL_EVERY_N_STEPS == 0:
-                    val_metrics = evaluate_model(model, custom_loss_fn, val_dataloader)
+                    val_metrics = evaluate_model(model, custom_loss_fn, val_dataloader, tokenizer)
 
                     print(f"\nValidation at step {global_step}:")
                     print(f"  Total Loss: {val_metrics['val_loss']:.4f}")
-                    
                     print(f"  CE Loss: {val_metrics['val_ce_loss']:.4f}")
                     print(f"  Penalty Loss: {val_metrics['val_penalty_loss']:.4f}")
-                    print(
-                        f"  Non-Music Errors: {val_metrics['non_music_predictions']}/{val_metrics['total_mask_positions']}"
-                    )
-                    
                     print(f"  Non-music rate: {val_metrics['non_music_rate']:.3%}")
                     print(f"  Music rate: {val_metrics['music_rate']:.3%}")
+                    print(f"  EOS rate: {val_metrics['eos_rate']:.3%}")
                     print(f"  Exact-match rate: {val_metrics['exact_match_rate']:.3%}")
-
 
                     metrics_history["val_loss"].append(val_metrics["val_loss"])
 
         avg_train_loss = epoch_loss / max(1, steps_in_epoch)
         metrics_history["train_loss"].append(avg_train_loss)
 
-        val_metrics = evaluate_model(model, custom_loss_fn, val_dataloader)
+        val_metrics = evaluate_model(model, custom_loss_fn, val_dataloader, tokenizer)
 
         print(f"\nEpoch {epoch+1} finished.")
         print(f"  Train Loss: {avg_train_loss:.4f}")
-        
         print(f"  Val Total Loss: {val_metrics['val_loss']:.4f}")
         print(f"  Val CE Loss: {val_metrics['val_ce_loss']:.4f}")
         print(f"  Val Penalty Loss: {val_metrics['val_penalty_loss']:.4f}")
-        
         print(f"  Non-music rate: {val_metrics['non_music_rate']:.3%}")
         print(f"  Music rate: {val_metrics['music_rate']:.3%}")
+        print(f"  EOS rate: {val_metrics['eos_rate']:.3%}")
         print(f"  Exact-match rate: {val_metrics['exact_match_rate']:.3%}")
 
         # Save model after each epoch
@@ -312,8 +304,7 @@ def train_loop(model, tokenizer, tokenized):
 
 def evaluate_model(model, loss_fn, dataloader, tokenizer=None):
     """
-    Evaluate model using a single dataloader (already contains input/labels).
-    Compare greedy predictions at mask positions to labels and to MUSIC_TOKEN_IDS.
+    Enhanced evaluation with detailed prediction breakdown
     """
     model.eval()
 
@@ -323,15 +314,18 @@ def evaluate_model(model, loss_fn, dataloader, tokenizer=None):
     total_steps = 0
 
     total_mask_positions = 0
-    total_non_music_preds = 0      # preds that are NOT music tokens
-    total_exact_matches = 0        # pred == label at mask pos
-    total_music_preds = 0          # preds that are music tokens (regardless of exact match)
+    total_music_preds = 0
+    total_eos_preds = 0
+    total_other_preds = 0
+    total_exact_matches = 0
+
+    music_token_set = set(MUSIC_TOKEN_IDS)
+    eos_token_id = tokenizer.eos_token_id if tokenizer else None
 
     with torch.inference_mode():
         for batch in tqdm(dataloader, desc="Evaluating"):
             batch = {k: v.to(DEVICE) for k, v in batch.items()}
 
-            # Count masked positions (ground-truth positions we care about)
             batch_mask_count = int(batch["mask_positions"].sum().item())
             total_mask_positions += batch_mask_count
 
@@ -354,64 +348,54 @@ def evaluate_model(model, loss_fn, dataloader, tokenizer=None):
             total_penalty_loss += loss_components.get("non_music_penalty", 0.0)
             total_steps += 1
 
-            # ---- METRICS FROM PREDICTIONS ----
-            # outputs.logits: (batch, seq_len, vocab)
-            pred_ids = outputs.logits.argmax(dim=-1)  # shape: [B, S]
-            labels = batch["labels"]                  # shape: [B, S]
-            mask_pos = batch["mask_positions"].bool() # shape: [B, S]
+            # Detailed prediction analysis
+            pred_ids = outputs.logits.argmax(dim=-1)
+            labels = batch["labels"]
+            mask_pos = batch["mask_positions"].bool()
 
-            # Ensure MUSIC_TOKEN_IDS set (use python set for fast membership)
-            music_id_set = set(MUSIC_TOKEN_IDS)
-
-            # Vectorized checks per batch
-            B, S = pred_ids.shape
-            # Flatten to iterate only masked positions
             pred_flat = pred_ids[mask_pos]
             label_flat = labels[mask_pos]
 
             if pred_flat.numel() > 0:
-                # Count how many predictions are music tokens
-                # convert pred_flat to cpu numpy for membership check (fast for large vocab)
                 pred_np = pred_flat.detach().cpu().numpy()
-                is_music_pred = [int(p in music_id_set) for p in pred_np]
-                music_preds_count = sum(is_music_pred)
-                total_music_preds += music_preds_count
-
-                # non-music predictions = masked positions - music_preds_count
-                total_non_music_preds += (pred_flat.numel() - music_preds_count)
-
-                # exact matches where label != -100
-                # convert label_flat to cpu numpy and compare
                 label_np = label_flat.detach().cpu().numpy()
-                exact_matches = 0
+
                 for p, l in zip(pred_np, label_np):
-                    if int(l) == -100:
-                        continue
-                    if int(p) == int(l):
-                        exact_matches += 1
-                total_exact_matches += exact_matches
+                    p_int, l_int = int(p), int(l)
+                    
+                    # Count prediction types
+                    if p_int in music_token_set:
+                        total_music_preds += 1
+                    elif p_int == eos_token_id:
+                        total_eos_preds += 1
+                    else:
+                        total_other_preds += 1
+                    
+                    # Count exact matches
+                    if l_int != -100 and p_int == l_int:
+                        total_exact_matches += 1
 
     model.train()
 
-    # compute metrics (safeguard division)
+    # Calculate rates
     mask_pos_total = total_mask_positions if total_mask_positions > 0 else 1
     music_rate = total_music_preds / mask_pos_total
-    non_music_rate = total_non_music_preds / mask_pos_total
+    eos_rate = total_eos_preds / mask_pos_total
+    other_rate = total_other_preds / mask_pos_total
     exact_match_rate = total_exact_matches / mask_pos_total
 
     return {
         "val_loss": total_loss / max(1, total_steps),
         "val_ce_loss": total_ce_loss / max(1, total_steps),
         "val_penalty_loss": total_penalty_loss / max(1, total_steps),
-        "non_music_predictions": total_non_music_preds,
+        "non_music_predictions": total_eos_preds + total_other_preds,
         "total_mask_positions": total_mask_positions,
-        "music_rate": music_rate,               # fraction of mask positions predicted as music tokens
-        "non_music_rate": non_music_rate,
-        "exact_match_rate": exact_match_rate,   # fraction where pred == label at mask pos
-        "error_rate": non_music_rate
+        "music_rate": music_rate,
+        "eos_rate": eos_rate,
+        "non_music_rate": eos_rate + other_rate,  # EOS + other non-music tokens
+        "exact_match_rate": exact_match_rate,
+        "error_rate": eos_rate + other_rate
     }
-
-
 
 
 ############################################################
