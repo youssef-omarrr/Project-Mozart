@@ -1,0 +1,15 @@
+{
+  "name": "wow",
+  "bpm": 30.0,
+  "duration_beats": 900,
+  "duration_minutes": 30.0,
+  "tracks": {
+    "harp": [
+      "Rest_1.5",
+      "F#5_s",
+      "Rest_s",
+      "G#5_s",
+      "Rest_"
+    ]
+  }
+}

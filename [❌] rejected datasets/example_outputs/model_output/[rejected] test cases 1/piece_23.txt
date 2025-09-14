@@ -1,0 +1,17 @@
+{
+  "name": "wow",
+  "bpm": 30.0,
+  "duration_beats": 900,
+  "duration_minutes": 30.0,
+  "tracks": {
+    "bass": [
+      "Rest_q",
+      "Rest_q",
+      "Rest_q",
+      "Rest_q",
+      "Rest_q",
+      "Rest_q",
+      "Rest"
+    ]
+  }
+}

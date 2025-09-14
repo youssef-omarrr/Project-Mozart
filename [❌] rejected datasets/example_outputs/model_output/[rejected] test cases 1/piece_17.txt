@@ -1,0 +1,14 @@
+{
+  "name": "wow",
+  "bpm": 190.0,
+  "duration_beats": 190,
+  "duration_minutes": 1.0,
+  "tracks": {
+    "drums": [
+      "Rest_1/3",
+      "Rest_2/3",
+      "Rest_3/3",
+      "Rest_1/3"
+    ]
+  }
+}
