@@ -139,20 +139,36 @@ def collate_fn(batch, pad_id=0):
 def create_dataset_and_dataloader(seq_len=32,
                                 pad_id=0,
                                 stride=8,
-                                batch_size=32):
+                                batch_size=32,
+                                val_split=0.2):
     """
-    Creates a dataset and dataloader for training.
+    Creates a dataset and dataloaders for training and validation.
     """
-    _, int_seqs = get_vocab_size(test_print=False)
+    vocab_size, int_seqs = get_vocab_size(test_print=False)
 
     dataset = MIDIDataset(int_seqs,
                         seq_len=seq_len,
                         pad_id=pad_id,
                         stride=stride)
 
-    loader = DataLoader(dataset,
+    # Split dataset into train and validation
+    dataset_size = len(dataset)
+    val_size = int(val_split * dataset_size)
+    train_size = dataset_size - val_size
+    
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        dataset, [train_size, val_size]
+    )
+
+    # Create data loaders
+    train_loader = DataLoader(train_dataset,
+                            batch_size=batch_size,
+                            shuffle=True,
+                            collate_fn=lambda b: collate_fn(b, pad_id=pad_id))
+    
+    val_loader = DataLoader(val_dataset,
                         batch_size=batch_size,
-                        shuffle=True,
+                        shuffle=False,
                         collate_fn=lambda b: collate_fn(b, pad_id=pad_id))
 
-    return dataset, loader
+    return dataset, train_loader, val_loader, vocab_size, int_seqs
