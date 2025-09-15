@@ -136,7 +136,7 @@ def random_start_symbols(n=3, octave_range=(3, 5)):
 
 
 # ------------------------------------------------------------
-# TOKEN TYPE DETECTION
+# TOKEN TYPE AND SEQUENCE DETECTION
 # ------------------------------------------------------------
 
 def token_type(token_name):
@@ -148,3 +148,55 @@ def token_type(token_name):
             return t
     return None
 
+def validate_token_sequence(tokenizer, token_ids, max_check=100):
+    """
+    Validate that a token sequence follows proper musical structure:
+    Bar -> Position -> Pitch -> Velocity -> Duration -> (Position or Bar) -> ...
+    """
+    vocab, id_to_token = build_vocab_maps(tokenizer)
+    
+    check_ids = token_ids[:min(len(token_ids), max_check)]
+    valid_transitions = 0
+    invalid_transitions = 0
+    
+    # State machine for musical structure
+    expected_states = {
+        "Bar": ["Position"],
+        "Position": ["Pitch"],
+        "Pitch": ["Velocity"], 
+        "Velocity": ["Duration"],
+        "Duration": ["Position", "Bar"]
+    }
+    
+    current_state = None
+    
+    for i, token_id in enumerate(check_ids):
+        token_name = id_to_token.get(token_id, f"Unknown_{token_id}")
+        
+        if token_name.startswith(("EOS", "PAD")):
+            continue
+            
+        token_type_val = token_type(token_name)  # Use existing function
+        
+        if token_type_val:
+            if current_state is None:
+                current_state = token_type_val
+                valid_transitions += 1
+            elif token_type_val in expected_states.get(current_state, []):
+                valid_transitions += 1
+                current_state = token_type_val
+            else:
+                invalid_transitions += 1
+                expected = expected_states.get(current_state, [])
+                print(f"Invalid transition at {i}: {current_state} -> {token_type_val} (expected: {expected})")
+                current_state = token_type_val
+    
+    total = valid_transitions + invalid_transitions
+    accuracy = valid_transitions / total if total > 0 else 0
+    
+    return {
+        "valid_transitions": valid_transitions,
+        "invalid_transitions": invalid_transitions,
+        "accuracy": accuracy,
+        "total_checked": len(check_ids)
+    }
