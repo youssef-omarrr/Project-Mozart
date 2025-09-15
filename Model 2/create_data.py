@@ -59,21 +59,24 @@ def to_int_list(seq):
 # ----------------------------------------------------
 # Vocab Size Extraction
 # ----------------------------------------------------
-def get_vocab_size(test_print=False):
+def get_vocab_size(tokenizer, test_print=False):
     """
-    Tokenizes the MIDI dataset and computes vocabulary size.
-    Returns (vocab_size, int_seqs).
+    Gets vocabulary size directly from tokenizer.
+    Returns (vocab_size, id_to_token).
     """
+    # First get sequences
     tokenized = tokenize_MIDI()
-    int_seqs = [to_int_list(seq) for seq in tokenized]
+    sequences = [to_int_list(seq) for seq in tokenized]
 
-    vocab_size = max(max(seq) for seq in int_seqs) + 1
+    vocab = tokenizer.vocab
+    vocab_size = len(vocab)
+    
 
     if test_print:
         print(f"Vocab size: {vocab_size}")
-        print("First sequence:", int_seqs[0][:20])
+        print("First 10 tokens:", list(vocab.items())[:10])
 
-    return vocab_size, int_seqs
+    return vocab_size, sequences
 
 
 # ----------------------------------------------------
@@ -136,7 +139,8 @@ def collate_fn(batch, pad_id=0):
 # ----------------------------------------------------
 # Dataset + DataLoader Creation
 # ----------------------------------------------------
-def create_dataset_and_dataloader(seq_len=32,
+def create_dataset_and_dataloader(id_to_token,
+                                seq_len=32,
                                 pad_id=0,
                                 stride=8,
                                 batch_size=32,
@@ -144,9 +148,8 @@ def create_dataset_and_dataloader(seq_len=32,
     """
     Creates a dataset and dataloaders for training and validation.
     """
-    vocab_size, int_seqs = get_vocab_size(test_print=False)
 
-    dataset = MIDIDataset(int_seqs,
+    dataset = MIDIDataset(id_to_token,
                         seq_len=seq_len,
                         pad_id=pad_id,
                         stride=stride)
@@ -171,4 +174,4 @@ def create_dataset_and_dataloader(seq_len=32,
                         shuffle=False,
                         collate_fn=lambda b: collate_fn(b, pad_id=pad_id))
 
-    return dataset, train_loader, val_loader, vocab_size, int_seqs
+    return dataset, train_loader, val_loader

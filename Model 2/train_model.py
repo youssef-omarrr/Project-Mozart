@@ -5,227 +5,215 @@ import os
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from notes_utils import validate_token_sequence, build_vocab_maps
+from notes_utils import build_vocab_maps
+
 
 # -------------------------------------------------------
-# Enhanced Training Function with Structural Awareness
+# Build type maps & allowed transitions
 # -------------------------------------------------------
-def train(model,
-        train_loader,
-        val_loader,
-        tokenizer,
-        epochs: int = 5,
-        save_dir: str = "checkpoints/",
-        learning_rate: float = 1e-4,
-        warmup_steps: int = 1000,
-        structural_weight: float = 0.3) -> None:
-    """
-    Train a MusicTransformer model with structural awareness to enforce proper token ordering.
-    
-    Args:
-        model (nn.Module): The transformer model to train.
-        train_loader (DataLoader): DataLoader for training data.
-        val_loader (DataLoader): DataLoader for validation data.
-        tokenizer: Tokenizer for sequence validation.
-        epochs (int, optional): Number of epochs to train. Default = 5.
-        save_dir (str, optional): Directory to save checkpoints. Default = "checkpoints/".
-        learning_rate (float): Learning rate for optimizer.
-        warmup_steps (int): Number of warmup steps for learning rate scheduler.
-        structural_weight (float): Weight for structural loss component (0-1).
-    """
-    # Ensure save directory exists
-    os.makedirs(save_dir, exist_ok=True)
+def build_structural_constraints(tokenizer, device):
+    vocab, id_to_token = build_vocab_maps(tokenizer)
+    vocab_size = len(vocab)
 
-    # Select device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.to(device)
-
-    # Build vocab maps for structural analysis
-    _, id_to_token = build_vocab_maps(tokenizer)
-    
-    # Define expected token transitions
     expected_transitions = {
         "Bar": ["Position"],
         "Position": ["Pitch"],
-        "Pitch": ["Velocity"], 
+        "Pitch": ["Velocity"],
         "Velocity": ["Duration"],
         "Duration": ["Position", "Bar"]
     }
 
-    # Optimizer with better settings
-    optimizer = torch.optim.AdamW(
-        model.parameters(), 
-        lr=learning_rate,
-        weight_decay=0.01,
-        betas=(0.9, 0.95)
-    )
+    # Create type index mapping
+    types = list(expected_transitions.keys())
+    type2idx = {t: i for i, t in enumerate(types)}
+
+    # Map token_id -> type_idx (or -1 if no type)
+    token_type_arr = torch.full((vocab_size,), -1, dtype=torch.long)
+    for tid, tname in id_to_token.items():
+        for t in types:
+            if tname.startswith(f"{t}_"):
+                token_type_arr[tid] = type2idx[t]
+                break
+
+    # Allowed next-token masks
+    allowed_next_mask = torch.zeros((len(types), vocab_size), dtype=torch.bool)
+    for t, next_types in expected_transitions.items():
+        t_idx = type2idx[t]
+        for tid, tname in id_to_token.items():
+            if any(tname.startswith(f"{nt}_") for nt in next_types):
+                allowed_next_mask[t_idx, tid] = True
+
+    return vocab_size, token_type_arr.to(device), allowed_next_mask.to(device)
+
+
+# -------------------------------------------------------
+# Structural Loss
+# -------------------------------------------------------
+def compute_structural_loss(
+    logits_flat, targets_flat, x, token_type_arr, allowed_next_mask,
+    pad_id, structural_weight, device
+):
+    struct_loss = torch.tensor(0.0, device=device)
+
+    if structural_weight > 0:
+        curr_type_idx = token_type_arr[x[:, :-1]]          # (B, L-1)
+        curr_type_flat = curr_type_idx.contiguous().view(-1)
+
+        valid_pos_mask = (curr_type_flat >= 0) & (targets_flat != pad_id)
+
+        if valid_pos_mask.any():
+            logits_valid = logits_flat[valid_pos_mask]       # (N_valid, V)
+            types_valid = curr_type_flat[valid_pos_mask]    # (N_valid,)
+            probs_valid = torch.softmax(logits_valid, dim=1)
+
+            allowed_masks = allowed_next_mask[types_valid]   # (N_valid, V)
+            allowed_prob = (probs_valid * allowed_masks.float()).sum(dim=1)
+
+            eps = 1e-9
+            struct_loss = -torch.log(allowed_prob + eps).mean()
+
+    return struct_loss
+
+
+# -------------------------------------------------------
+# Training Loop
+# -------------------------------------------------------
+def train_one_epoch(model, train_loader, optimizer, scheduler,
+                    token_type_arr, allowed_next_mask,
+                    main_loss_fn, structural_weight, pad_id,
+                    device, epoch, epochs, global_step):
+    model.train()
+    total_main, total_struct = 0.0, 0.0
+
+    pbar = tqdm(enumerate(train_loader), total=len(train_loader),
+                desc=f"Epoch {epoch+1}/{epochs}")
+    for step, (x, y) in pbar:
+        x, y = x.to(device), y.to(device)
+
+        logits = model(x[:, :-1])  # (B, L-1, V)
+        B, Lm1, V = logits.shape
+        logits_flat = logits.view(-1, V)
+        targets_flat = y[:, 1:].contiguous().view(-1)
+
+        # Cross-entropy
+        main_loss = main_loss_fn(logits_flat, targets_flat)
+
+        # Structural loss
+        struct_loss = compute_structural_loss(
+            logits_flat, targets_flat, x,
+            token_type_arr, allowed_next_mask,
+            pad_id, structural_weight, device
+        )
+
+        # Combine losses
+        loss = main_loss + structural_weight * struct_loss
+
+        # Backprop
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        scheduler.step()
+
+        total_main += main_loss.item()
+        total_struct += struct_loss.item()
+        global_step += 1
+
+        pbar.set_postfix({
+            "main_loss": f"{total_main / (step+1):.4f}",
+            "struct_loss": f"{total_struct / (step+1):.4f}",
+            "lr": f"{scheduler.get_last_lr()[0]:.2e}"
+        })
+
+    return total_main / len(train_loader), total_struct / len(train_loader), global_step
+
+
+# -------------------------------------------------------
+# Validation Loop
+# -------------------------------------------------------
+def validate(model, val_loader, main_loss_fn, device):
+    model.eval()
+    val_loss = 0.0
+    with torch.inference_mode():
+        for val_x, val_y in val_loader:
+            val_x, val_y = val_x.to(device), val_y.to(device)
+            v_logits = model(val_x[:, :-1])
+            Bv, Lm1v, Vv = v_logits.shape
+            v_logits_flat = v_logits.view(-1, Vv)
+            v_targets_flat = val_y[:, 1:].contiguous().view(-1)
+            val_loss += main_loss_fn(v_logits_flat, v_targets_flat).item()
+    return val_loss / len(val_loader)
+
+
+# -------------------------------------------------------
+# Full Training Function
+# -------------------------------------------------------
+def train   (model, train_loader, val_loader, tokenizer,
+                epochs=5, save_dir="checkpoints/",
+                learning_rate=1e-4, warmup_steps=1000,
+                structural_weight=0.3,
+                resume_training=True):
+    """
+    Train (or resume training) for a MusicTransformer.
+    """
     
-    # Learning rate scheduler with warmup
-    def lr_lambda(step):
-        if step < warmup_steps:
-            return step / warmup_steps
-        else:
-            # Cosine decay after warmup
-            progress = (step - warmup_steps) / (len(train_loader) * epochs - warmup_steps)
-            return 0.5 * (1 + torch.cos(torch.pi * progress))
-    
+    os.makedirs(save_dir, exist_ok=True)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
+
+    # Structural constraints
+    _, token_type_arr, allowed_next_mask = build_structural_constraints(tokenizer, device)
+
+    # Optimizer & scheduler
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
+    def lr_lambda(step): return step / max(1, warmup_steps) if step < warmup_steps else 1.0
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
-    # Loss functions
-    main_loss_fn = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=0.1)
-    structural_loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+    # Loss
+    pad_id = getattr(tokenizer, "pad_token_id", 0)
+    main_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id, label_smoothing=0.1)
 
-    global_step = 0
-    best_loss = float('inf')
+    global_step, best_loss = 0, float("inf")
     
-    # Precompute token type mappings
-    token_type_map = {}
-    for token_id, token_name in id_to_token.items():
-        for token_type in expected_transitions:
-            if token_name.startswith(f"{token_type}_"):
-                token_type_map[token_id] = token_type
-                break
-        else:
-            token_type_map[token_id] = None
+    # --- try to load checkpoint ---
+    if resume_training:
+        ckpt_path = "checkpoints/best_model.pt"
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+        optimizer.load_state_dict(checkpoint["optimizer_state"])
+        scheduler.load_state_dict(checkpoint["scheduler_state"])
+        print(f"✅ Loaded best model (val_loss={checkpoint['val_loss']:.4f})")
 
-    # Precompute valid next token masks for each token type
-    valid_next_masks = {}
-    for current_type, next_types in expected_transitions.items():
-        mask = torch.zeros(vocab_size, device=device, dtype=torch.bool)
-        for token_id, token_name in id_to_token.items():
-            if any(token_name.startswith(f"{t}_") for t in next_types):
-                mask[token_id] = True
-        valid_next_masks[current_type] = mask
 
-    # ---- Training loop ----
     for epoch in range(epochs):
-        model.train()
-        total_loss = 0.0
-        total_main_loss = 0.0
-        total_struct_loss = 0.0
-        
-        progress_bar = tqdm(enumerate(train_loader),
-                            desc=f"Epoch {epoch+1}/{epochs}",
-                            total=len(train_loader),
-                            leave=True)
+        train_main, train_struct, global_step = train_one_epoch(
+            model, train_loader, optimizer, scheduler,
+            token_type_arr, allowed_next_mask,
+            main_loss_fn, structural_weight, pad_id,
+            device, epoch, epochs, global_step
+        )
 
-        for step, (x, y) in progress_bar:
-            x, y = x.to(device), y.to(device)
-            
-            # Forward pass
-            logits = model(x[:, :-1])
-            
-            # Reshape for loss calculation
-            batch_size, seq_len, vocab_size = logits.shape
-            logits_flat = logits.reshape(-1, vocab_size)
-            targets_flat = y[:, 1:].reshape(-1)
-            
-            # Main prediction loss
-            main_loss = main_loss_fn(logits_flat, targets_flat)
+        val_loss = validate(model, val_loader, main_loss_fn, device)
+        print(f"Epoch {epoch+1} finished | Train main: {train_main:.4f} | Train struct: {train_struct:.4f} | Val: {val_loss:.4f}")
 
-            # Structural awareness loss - only apply where we have valid transitions
-            struct_loss = torch.tensor(0.0, device=device)
-            if structural_weight > 0:
-                # Get current token types for the input sequence
-                current_types = torch.zeros_like(x[:, :-1])
-                for i in range(x[:, :-1].shape[0]):
-                    for j in range(x[:, :-1].shape[1]):
-                        current_types[i, j] = token_type_map.get(x[i, j].item(), -1)
-                
-                # Create structural mask (only positions where we have expected transitions)
-                struct_mask = (current_types != -1) & (current_types != None)
-                
-                # Apply structural loss only to valid positions
-                if struct_mask.sum() > 0:
-                    # Get the valid next token masks for each position
-                    valid_masks = torch.stack([valid_next_masks.get(current_types[i, j].item(), 
-                                                torch.zeros(vocab_size, device=device, dtype=torch.bool))
-                                            for i in range(struct_mask.shape[0])
-                                            for j in range(struct_mask.shape[1]) if struct_mask[i, j]])
-                    
-                    # Get the logits for masked positions
-                    masked_logits = logits_flat[struct_mask.view(-1)]
-                    
-                    # Create target: maximize probability of valid next tokens
-                    struct_loss = -torch.log((masked_logits.softmax(dim=1) * valid_masks.float()).sum(dim=1) + 1e-10).mean()
-                    
-            
-            # Combined loss
-            loss = main_loss + structural_weight * struct_loss
-
-            # Backward pass with gradient accumulation
-            loss = loss / 2  # Simulate 2x gradient accumulation
-            loss.backward()
-            
-            if (step + 1) % 2 == 0:  # Update every 2 steps
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-
-            # Track metrics
-            total_loss += loss.item() * 2  # Account for scaling
-            total_main_loss += main_loss.item()
-            total_struct_loss += struct_loss.item() if structural_weight > 0 else 0
-            avg_loss = total_loss / (step + 1)
-            current_lr = scheduler.get_last_lr()[0]
-
-            progress_bar.set_postfix({
-                "step": f"{step+1}/{len(train_loader)}",
-                "loss": f"{loss.item() * 2:.4f}",
-                "main": f"{main_loss.item():.4f}",
-                "struct": f"{struct_loss.item():.4f}",
-                "avg_loss": f"{avg_loss:.4f}",
-                "lr": f"{current_lr:.2e}"
-            })
-            
-            global_step += 1
-
-        # Print epoch summary
-        epoch_main_loss = total_main_loss / len(train_loader)
-        epoch_struct_loss = total_struct_loss / len(train_loader) if structural_weight > 0 else 0
-        print(f"Epoch {epoch+1} finished | Main Loss: {epoch_main_loss:.4f} | Struct Loss: {epoch_struct_loss:.4f} | Total: {avg_loss:.4f}")
-
-        # ---- Validation and checkpoint ----
-        # Run validation on the actual validation set
-        model.eval()
-        val_loss = 0.0
-        with torch.no_grad():
-            for val_x, val_y in val_loader:
-                val_x, val_y = val_x.to(device), val_y.to(device)
-                val_logits = model(val_x[:, :-1])
-                
-                # Calculate validation loss
-                batch_size, seq_len, vocab_size = val_logits.shape
-                val_logits_flat = val_logits.reshape(-1, vocab_size)
-                val_targets_flat = val_y[:, 1:].reshape(-1)
-                val_loss += main_loss_fn(val_logits_flat, val_targets_flat).item()
-            
-            avg_val_loss = val_loss / len(val_loader)
-            print(f"Validation Loss: {avg_val_loss:.4f}")
-        
-        model.train()
-        
-        # Save checkpoint
+        # Save checkpoints
         ckpt_path = os.path.join(save_dir, f"checkpoint_epoch{epoch+1}.pt")
-        checkpoint = {
-            "epoch": epoch + 1,
+        torch.save({
+            "epoch": epoch+1,
             "global_step": global_step,
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "scheduler_state": scheduler.state_dict(),
-            "loss": avg_loss,
-            "val_loss": avg_val_loss,
-            "main_loss": epoch_main_loss,
-            "struct_loss": epoch_struct_loss,
-        }
-        torch.save(checkpoint, ckpt_path)
-        
-        # Save best model based on validation loss
-        if avg_val_loss < best_loss:
-            best_loss = avg_val_loss
-            best_path = os.path.join(save_dir, "best_model.pt")
-            torch.save(checkpoint, best_path)
+            "val_loss": val_loss,
+        }, ckpt_path)
+
+        if val_loss < best_loss:
+            best_loss = val_loss
+            torch.save({
+                    "model_state": model.state_dict(),
+                    "optimizer_state": optimizer.state_dict(),
+                    "scheduler_state": scheduler.state_dict(),
+                    "val_loss": best_loss,
+                }, os.path.join(save_dir, "best_model.pt"))
             print(f"New best model saved with validation loss: {best_loss:.4f}")
 
     print(f"Training completed! Best validation loss: {best_loss:.4f}")
