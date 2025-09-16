@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 from notes_utils import build_vocab_maps
+import math
 
 
 # -------------------------------------------------------
@@ -148,11 +149,13 @@ def validate(model, val_loader, main_loss_fn, device):
 # -------------------------------------------------------
 # Full Training Function
 # -------------------------------------------------------
-def train   (model, train_loader, val_loader, tokenizer,
-                epochs=5, save_dir="checkpoints/",
-                learning_rate=1e-4, warmup_steps=1000,
-                structural_weight=0.3,
-                resume_training=True):
+def train(model, train_loader, val_loader, tokenizer,
+          epochs=20,  # Increase epochs - music models need more training
+          save_dir="checkpoints/",
+          learning_rate=5e-5,  # Reduce learning rate for better convergence
+          warmup_steps=2000,   # Increase warmup steps
+          structural_weight=0.1,  # Reduce structural weight - it might be too strong
+          resume_training=True):
     """
     Train (or resume training) for a MusicTransformer.
     """
@@ -164,25 +167,37 @@ def train   (model, train_loader, val_loader, tokenizer,
     # Structural constraints
     _, token_type_arr, allowed_next_mask = build_structural_constraints(tokenizer, device)
 
-    # Optimizer & scheduler
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
-    def lr_lambda(step): return step / max(1, warmup_steps) if step < warmup_steps else 1.0
+    # Optimizer & scheduler with better settings
+    optimizer = torch.optim.AdamW(model.parameters(), 
+                                  lr=learning_rate, 
+                                  weight_decay=0.01,
+                                  betas=(0.9, 0.95))  # Better betas for music
+    
+    # Cosine decay after warmup instead of constant
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return step / max(1, warmup_steps)
+        else:
+            # Cosine decay
+            progress = (step - warmup_steps) / (len(train_loader) * epochs - warmup_steps)
+            return 0.5 * (1 + math.cos(math.pi * progress))
+    
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
-    # Loss
+    # Loss with less label smoothing for music
     pad_id = getattr(tokenizer, "pad_token_id", 0)
-    main_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id, label_smoothing=0.1)
+    main_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_id, label_smoothing=0.05)  # Reduce from 0.1
 
     global_step, best_loss = 0, float("inf")
     
-    # --- try to load checkpoint ---
+    # Load checkpoint if exists
     if resume_training:
         ckpt_path = "checkpoints/best_model.pt"
-        checkpoint = torch.load(ckpt_path, map_location="cpu")
-        optimizer.load_state_dict(checkpoint["optimizer_state"])
-        scheduler.load_state_dict(checkpoint["scheduler_state"])
-        print(f"✅ Loaded best model (val_loss={checkpoint['val_loss']:.4f})")
-
+        if os.path.exists(ckpt_path):
+            checkpoint = torch.load(ckpt_path, map_location="cpu")
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
+            scheduler.load_state_dict(checkpoint["scheduler_state"])
+            print(f"✅ Loaded best model (val_loss={checkpoint['val_loss']:.4f})")
 
     for epoch in range(epochs):
         train_main, train_struct, global_step = train_one_epoch(
@@ -209,11 +224,11 @@ def train   (model, train_loader, val_loader, tokenizer,
         if val_loss < best_loss:
             best_loss = val_loss
             torch.save({
-                    "model_state": model.state_dict(),
-                    "optimizer_state": optimizer.state_dict(),
-                    "scheduler_state": scheduler.state_dict(),
-                    "val_loss": best_loss,
-                }, os.path.join(save_dir, "best_model.pt"))
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "scheduler_state": scheduler.state_dict(),
+                "val_loss": best_loss,
+            }, os.path.join(save_dir, "best_model.pt"))
             print(f"New best model saved with validation loss: {best_loss:.4f}")
 
     print(f"Training completed! Best validation loss: {best_loss:.4f}")

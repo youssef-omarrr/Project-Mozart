@@ -45,7 +45,7 @@ def midi_to_wav(
     output_dir="model_outputs/wav_files/",
     output_name=None,
     sample_rate=44100,
-    gain=2.0,
+    gain=3.0,
     normalize=True,
     fluidsynth_path=r"C:\tools\fluidsynth\bin\fluidsynth.exe",
     print_details=True

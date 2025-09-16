@@ -12,7 +12,7 @@ The **Encoder** converts a `.mid` file into a structured `.txt` file.
 * Notes and durations are encoded as symbolic tokens (e.g., `"C4_q"` for a quarter-note C4, `"Rest_h"` for a half-note rest).
 * This textual format is compact, human-readable, and suitable for training language models (LLMs) to learn musical sequences.
 
-**Final encoder implementation:** `encoder_2.py`
+**Final encoder implementation:** `encoder.py`
 
 ---
 
@@ -26,7 +26,7 @@ The **Decoder** performs the reverse transformation:
 
 This step makes it possible to **audibly evaluate** the generated sequences while retaining fine control over instruments and timbre.
 
-**Final decoder implementation:** `decoder_3.py`
+**Final decoder implementation:** `decoder.py`
 
 ---
 
@@ -35,6 +35,5 @@ This step makes it possible to **audibly evaluate** the generated sequences whil
 * Large `.wav` files are **not included** in the repository to save space.
 * Default SoundFont used: **AegeanSymphonicOrchestra-SND.sf2** (chosen for a more realistic orchestral sound).
 * **Next step:** Gather a diverse dataset of `.mid` files → encode them into text format → fine-tune the LLM for improved sequence generation.
-* In the final project, `encoder_2.py` and `decoder_3.py` will be **renamed and preserved** as the canonical implementations.
 
 ---
