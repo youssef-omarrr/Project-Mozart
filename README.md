@@ -26,6 +26,8 @@ A `PyTorch` implementation of a Transformer-based music generation pipeline usin
 
 ## Project structure (short)
 
+> Most files and folders have been renamed and moved to different directories, so older files may have the wrong `import` names or directories.
+
 ```
 ├── Model 0/              # failed experiment: GPT-2 medium + LoRA (tokenizer issues)
 ├── Model 1/              # failed experiment: facebook-BART seq2seq + LoRA (masking/loss issues)
