@@ -50,8 +50,9 @@ My train of thought was like this:
 	2. Use a pretrained model to be able to fill these data and finetune to learn and be able to generate music sequences like the one that the encoder created.
 	3. Once the model is done writing text like the ones the encoder created, this text out would then go to the decoder to convert the text back to audio
 
-> The encoder and decoder where build from scratch.
-> I quickly realized that the model being a chatbot is way too advanced so I just extracted the prompt manually.
+> * The encoder and decoder where build from scratch.
+> * I quickly realized that the model being a chatbot is way too advanced so I just extracted the prompt manually.
+> * For a more detailed models comparison, view the *Archived Models* folder.
 ### **Model 0**
 
 **Idea:**
@@ -157,43 +158,3 @@ if resume_training:
 
 ---
 
-## What worked (Model 2)
-
-- **Tokenization** with REMI produced compact, music-aware vocabulary.
-- **Causal attention** and **triangular masks** prevented token leakage.
-- **Structural constraints** reduced syntactic invalid outputs and improved musical validity.
-- **Training stability** improved with LayerNorm-before-projection, embedding scaling, and gradient clipping.
-- End-to-end generation pipeline (tokenize → train → sample → synthesize) is reproducible.
-
----
-
-## What failed (and why that’s valuable)
-
-### 1. Data & preprocessing
-
-- Flattening entire pieces into text lines >100k chars: learned to respect model input windows and the need to shard/segment sequences.
-- Overly large datasets stressed memory and training time, highlighting the importance of data preprocessing, batching strategies, and even curriculum learning.
-
-### 2. Tokenization
-
-- Pretrained tokenizers (GPT-2) split musical tokens incorrectly (e.g., "C4_q" → "C", "4", "_", "q"): showed why domain-specific tokenization is essential.
-- Experiments confirmed that language-based tokenizers assume natural text distributions, which don’t map well to symbolic music — leading to the design of a custom REMI tokenizer.
-- Even when music notes are added to the pretrained tokenizer, they represent a smaller portion of the total number of tokens leading to ignoring them in most cases.
-
-### 3. Modeling & architecture
-
-- Loss-based enforcement with complex penalties encouraged adversarial behavior: models found shortcuts instead of following rules — a lesson in constrained optimization and unintended equilibria.
-- Masking strategies in seq2seq (BART) still produced non-music tokens despite heavy penalties, teaching robustness testing, dataset balancing, and loss debugging.
-- Learned the difference between causal LLMs (autoregressive, natural fit for sequence continuation) vs seq2seq models (encode input, then decode output) — and why causal LMs were better for open-ended music generation.
-
-### 4. Training techniques
-
-- LoRA finetuning reduced training cost but exposed the limits of parameter-efficient methods when pretrained weights are misaligned with the domain (language vs symbolic music).
-- Exploding gradients and unstable training in earlier attempts underscored the need for gradient clipping, label smoothing, and better initialization.
-
-### 5. Engineering lessons
-
-- Encoder/decoder components (MIDI → text, text → WAV) didn’t integrate into the final model, but they remain functional standalone tools that can be reused in other projects.
-- The iterative failures made it clear that building reusable modules (data pipeline, tokenizer, encoder/decoder, generation scripts) is just as valuable as the final model.
-
----
