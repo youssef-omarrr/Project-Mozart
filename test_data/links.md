@@ -1,3 +1,0 @@
-- [CPDL Mozart works](https://www.cpdl.org/wiki/index.php/Wolfgang_Amadeus_Mozart)
-- [Mutopia Mozart collection](https://www.mutopiaproject.org/cgibin/make-table.cgi?Composer=MozartWA)
-- [very good](https://www.kunstderfuge.com/mozart.htm)
