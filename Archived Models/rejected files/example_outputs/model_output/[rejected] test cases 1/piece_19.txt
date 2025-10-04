@@ -1,0 +1,16 @@
+{
+  "name": "wow",
+  "bpm": 30.0,
+  "duration_beats": 900,
+  "duration_minutes": 30.0,
+  "tracks": {
+    "clarinet": [
+      "Rest_h",
+      "C5_s",
+      "E5_s",
+      "D5_s",
+      "C5_s",
+      "B"
+    ]
+  }
+}
