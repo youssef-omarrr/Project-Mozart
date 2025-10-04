@@ -1,7 +1,0 @@
-{
-  "name": "11",
-  "bpm": 120.0,
-  "duration_beats": 1200,
-  "duration_minutes": 10.0,
-  "tracks": {}
-}
