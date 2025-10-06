@@ -5,8 +5,6 @@ from torch.nn.functional import pad
 
 # Dataset definition
 # -------------------
-
-
 class MidiDataset(Dataset):
     """Dataset that converts token-id sequences into sliding-window (input, target) tensor pairs.
 
