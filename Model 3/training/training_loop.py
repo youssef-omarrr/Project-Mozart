@@ -12,8 +12,9 @@ def train_one_epoch(
             device,
             ):
     
-    # 0. put model in train mode
+    # 0. put model in train mode and init total_losses
     model.train()
+    total_losses = 0
     
     # 1. Loop through train_dataloader 
     pbar = tqdm(enumerate(train_dataloader), 
@@ -40,14 +41,15 @@ def train_one_epoch(
         optimizer.step()
         scheduler.step()
         
-        # 8. update the progress bar
+        # 8. update the progress bar and losses
+        total_losses += loss.item
         pbar.set_postfix({
-            "train_losses": f"{loss/ len(train_dataloader):.4f}",
+            "train_losses": f"{total_losses/ (step+1):.4f}",
             "lr": f"{scheduler.get_last:lr()[0]:.2e}"
         })
     
     # 9. return loss
-    return loss/ len(train_dataloader)
+    return total_losses/ len(train_dataloader)
     
     
 # Validating one epoch Fucntion
@@ -58,16 +60,18 @@ def validate(
     loss_fn:torch.nn.Module,
     device
 ):
-    # 0. put model to eval mode
+    # 0. put model to eval mode and init total_losses
     model.eval()
+    total_losses = 0
     
     # 1. go to infernce mode
     with torch.inference_mode():
         
         # 2. Loop through val_dataloader
-        pbar = tqdm( total= val_dataloader,
+        pbar = tqdm(enumerate(val_dataloader),
+                    total= val_dataloader,
                     desc=f"Testing...")
-        for x,y in pbar:
+        for step, (x,y) in pbar:
             
             # 3. put tensors to device
             x, y = x.to(device), y.to(device)
@@ -78,10 +82,11 @@ def validate(
             # 5. calculate the loss
             loss = loss_fn(logits, y)
             
-            # 6. update the progress bar
+            # 6. update the progress bar and losses
+            total_losses += loss.item()
             pbar.set_postfix({
-                "val_losses": f"{loss/ len(val_dataloader):.4f}",
+                "val_losses": f"{total_losses/ (step+1):.4f}",
             })
             
         # 7. return loss
-        return loss/len(val_dataloader)
+        return total_losses/len(val_dataloader)

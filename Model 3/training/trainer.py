@@ -82,7 +82,7 @@ def train_model(
             optim.load_state_dict(checkpoint["optimizer_state_dict"])
             scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
             
-            print(f"✅ Loaded pretrained model (val_loss={checkpoint['val_loss']:.4f})")
+            print(f"Loaded pretrained model (val_loss={checkpoint['val_loss']:.4f})")
         else:
             print ("[ERROR] Failed to load model. Starting a new save...")
             
@@ -101,6 +101,7 @@ def train_model(
         total_train_losses.append(train_loss)
         
         # 6. validate
+        print("Validating....")
         val_loss = validate(model,
                             val_dataloader,
                             loss_fn,
@@ -115,6 +116,13 @@ def train_model(
             "scheduler_state_dict": scheduler.state_dict(),
             "val_loss": val_loss
         }, os.path.join(check_point_dir, f"checkpoint_epoch_{epoch+1}.pth"))
+        
+        # 8. print epoch summary
+        print(f"Epoch no.{epoch+1} / {epochs} summary")
+        print("-"*35)
+        print(f"Average train losses = {train_loss}")
+        print(f"Average validation losses = {val_loss}")
+        print("="*35)
     
-    # 8. return losses lits
+    # 9. return losses lits
     return total_train_losses, total_val_losses
