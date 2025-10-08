@@ -51,6 +51,7 @@ def train_model(
     
     # 0. init device and put model in it
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Training on deivce: {device}")
     model.to(device)
     
     # 1. init losses, and warmup steps
@@ -118,13 +119,14 @@ def train_model(
             "scheduler_state_dict": scheduler.state_dict(),
             "val_loss": val_loss
         }, os.path.join(check_point_dir, f"checkpoint_epoch_{epoch+1}.pth"))
+        print("Model saved.")
         
         # 8. print epoch summary
         print(f"Epoch no.{epoch+1} / {epochs} summary")
         print("-"*35)
-        print(f"Average train losses = {train_loss}")
-        print(f"Average validation losses = {val_loss}")
-        print("="*35)
+        print(f"Average train losses = {train_loss:.3f}")
+        print(f"Average validation losses = {val_loss:.3f}")
+        print("="*35, "\n")
     
     # 9. return losses lits
     return total_train_losses, total_val_losses

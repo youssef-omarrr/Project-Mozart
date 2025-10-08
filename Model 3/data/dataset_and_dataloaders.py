@@ -39,7 +39,7 @@ class MidiDataset(Dataset):
 
             # 2. Create the sliding window and make them into tensors
             # --------------------------------------------------------
-            for i in range(0, len(seq)-1, stride):
+            for i in range(0, len(seq)-seq_len, stride):
                 x = torch.tensor(seq[i:i+seq_len], dtype=torch.long)
                 y = torch.tensor(seq[i+1:i+seq_len+1],  dtype=torch.long)
 
