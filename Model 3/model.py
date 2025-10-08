@@ -41,15 +41,16 @@ def sine_positional_encoding(max_len, embed_dim):
 # -----------------
 class ProjectMozart(nn.Module):
     def __init__(self,
-                vocab_size: int,
-                embed_dim: int = 512,  # the size of each token’s vector representation
+                vocab_size: int = 564, # My tokenizer's vocab size
+                embed_dim: int = 256,  # the size of each token’s vector representation
 
                 n_heads: int = 8,  # number of independent attention mechanisms running in parallel
                 n_layers: int = 8,  # depth of the network
 
                 feedforward_dim: int = 2048,  # the hidden layer size of the MLP
                 dropout: float = 0.1,
-                max_seq_len: int = 2048):
+                max_seq_len: int = 512 # same as the seq_len in the dataloader
+                ):
         super().__init__()
 
         # Used in the forward function
@@ -122,7 +123,7 @@ class ProjectMozart(nn.Module):
 
         # Causal mask
         # ------------
-        mask = self._generate_causal_mask(seq_len)
+        mask = self._generate_causal_mask(seq_len).to(x.device)
 
         # Transformer
         # -----------

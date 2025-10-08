@@ -18,7 +18,7 @@ def train_one_epoch(
     
     # 1. Loop through train_dataloader 
     pbar = tqdm(enumerate(train_dataloader), 
-                total= train_dataloader,
+                total= len(train_dataloader),
                 desc=f"Training...")
     for step, (x, y) in pbar:
         
@@ -29,7 +29,11 @@ def train_one_epoch(
         logits = model(x)
         
         # 4. calculate the loss
-        loss = loss_fn(logits, y)
+        # logits: (batch, seq_len, vocab_size) -> (batch*seq_len, vocab_size)
+        # y: (batch, seq_len) -> (batch*seq_len)
+        batch, seq_len, vocab_size = logits.size()
+        loss = loss_fn(logits.view(batch*seq_len, vocab_size), 
+                        y.view(batch*seq_len))
         
         # 5. zero grad
         optimizer.zero_grad()
@@ -42,10 +46,10 @@ def train_one_epoch(
         scheduler.step()
         
         # 8. update the progress bar and losses
-        total_losses += loss.item
+        total_losses += loss.item()
         pbar.set_postfix({
             "train_losses": f"{total_losses/ (step+1):.4f}",
-            "lr": f"{scheduler.get_last:lr()[0]:.2e}"
+            "lr": f"{scheduler.get_last_lr()[0]:.2e}"
         })
     
     # 9. return loss
@@ -60,6 +64,7 @@ def validate(
     loss_fn:torch.nn.Module,
     device
 ):
+    
     # 0. put model to eval mode and init total_losses
     model.eval()
     total_losses = 0
@@ -69,7 +74,7 @@ def validate(
         
         # 2. Loop through val_dataloader
         pbar = tqdm(enumerate(val_dataloader),
-                    total= val_dataloader,
+                    total= len(val_dataloader),
                     desc=f"Testing...")
         for step, (x,y) in pbar:
             
@@ -80,7 +85,9 @@ def validate(
             logits = model(x)
             
             # 5. calculate the loss
-            loss = loss_fn(logits, y)
+            batch, seq_len, vocab_size = logits.size()
+            loss = loss_fn(logits.view(batch*seq_len, vocab_size), 
+                            y.view(batch*seq_len))
             
             # 6. update the progress bar and losses
             total_losses += loss.item()

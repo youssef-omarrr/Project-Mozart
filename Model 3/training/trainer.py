@@ -1,12 +1,12 @@
 import torch
 from math import cos, pi
-from training_loop import train_one_epoch, validate
+from .training_loop import train_one_epoch, validate
 import os
 
 # Helper lr_lambda function for the scheudler
 # --------------------------------------------
-def make_lr_lambda(step):
-    def lr_lambda(warmup_steps, train_len, epochs):
+def make_lr_lambda(warmup_steps, train_len, epochs):
+    def lr_lambda(step):
         """
         This defines how the learning rate changes as the number of training steps increases.
         
@@ -71,8 +71,7 @@ def train_model(
                                                                 epochs))
     
     # 3. load pretrained model if available
-    if not load_pretrained:
-        # see if it is available
+    if load_pretrained:
         if os.path.exists(load_pretrained):
             # load checkpoint
             checkpoint = torch.load(load_pretrained, map_location="cpu")
@@ -84,7 +83,7 @@ def train_model(
             
             print(f"Loaded pretrained model (val_loss={checkpoint['val_loss']:.4f})")
         else:
-            print ("[ERROR] Failed to load model. Starting a new save...")
+            print(f"[WARNING] load_pretrained path was provided but does not exist: {load_pretrained}")
             
     # 4. Full training loop
     for epoch in range(epochs):
@@ -108,6 +107,9 @@ def train_model(
                             device)
         total_val_losses.append(val_loss)
         
+        # ensure checkpoint dir exists
+        os.makedirs(check_point_dir, exist_ok=True)
+
         # 7. save checkpoints of the model
         torch.save({
             "trained_epochs" : epoch+1,

@@ -82,7 +82,7 @@ def create_dataloaders(
 				tokenized_data: list,
 				seq_len: int = 512,
 				pad_id: int = 0,
-				stride: int = 1,
+				stride: int = 8,
 				batch_size: int = 32,
 				val_split: float = 0.1,
 				random_seed: int = 42):
