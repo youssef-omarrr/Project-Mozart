@@ -40,7 +40,7 @@ All earlier experiments are preserved in the **`Archived Models/`** directory to
 - Dataset, dataloader, and model parameter shapes were chosen after multiple experiments to **balance output quality and training time**: an early experiment required *~200 hours per epoch*; current runs complete an epoch in *~1.5 hours*.
 - The dataset now uses **token IDs directly**, which simplifies training and avoided the manual token -> ID conversion that slowed Model 2.
 
->**Note:** Training Model 3 requires only 2-3 epochs, however it is better to train on one dataset only not all at the same time.
+>**Note:** Training Model 3 requires only 2-3 epochs, however it is better to train on **one dataset only** per model not all at the same time, as the model sounds way better when it learns one style and not mix them together.
 
 ---
 ## Project structure
