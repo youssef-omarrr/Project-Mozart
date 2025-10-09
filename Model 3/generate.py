@@ -35,8 +35,8 @@ first_six = torch.tensor(
 # -------------------------------------------
 def generate_music(model,
                     tokenizer,
-                    continue_gen_tensor:torch.Tensor = None,
                     continue_gen_midi:str = None,
+                    continue_gen_tensor:torch.Tensor = None,
                     file_name:str = "Generated_Mozart",
                     max_new_tokens:int = 2048,
                     temperature:float = 0.95,
@@ -48,10 +48,10 @@ def generate_music(model,
     Parameters
     - model: A PyTorch model with a positional_encoding attribute (used to determine max sequence length).
     - tokenizer: A tokenizer object (REMI).
-    - continue_gen_tensor (torch.Tensor, optional): Tensor of token ids to continue generation from.
-        > If provided, it is used as the starting context. Mutually exclusive with continue_gen_midi.
     - continue_gen_midi (str, optional): Path to a MIDI file to continue generation from.
         > If provided, it is tokenized and used as the starting context. Mutually exclusive with continue_gen_tensor.
+    - continue_gen_tensor (torch.Tensor, optional): Tensor of token ids to continue generation from.
+        > If provided, it is used as the starting context. Mutually exclusive with continue_gen_midi.
     - file_name (str): Base name used when saving generated files.
     - max_new_tokens (int): Number of new tokens to generate.
     - temperature (float): Sampling temperature to control randomness.
@@ -59,7 +59,7 @@ def generate_music(model,
 
     Notes
     - Only one of continue_gen_tensor or continue_gen_midi should be active at a time.
-        If both are provided, continue_gen_tensor takes precedence.
+        If both are provided, continue_gen_midi takes precedence.
     - Side effects: saves a MIDI file and a WAV file into model_outputs/* directories.
     - Returns: torch.Tensor of generated token ids with shape (1, total_length).
     """
@@ -68,25 +68,28 @@ def generate_music(model,
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.eval().to(device)
     
-    # 2.1. Select a starting sequence randomly (to feed to our model as a starting point)
-    # or continue from given sequence (tokens or midi file)
-    if continue_gen_tensor is not None:
-        tokens = continue_gen_tensor.to(device)
-        print("[Loaded] Continuing generation from given tensor...")
-        
-    elif continue_gen_midi is not None:
+    # 2.0. Select starting tokens according to given parameters
+    # 2.1. Continue from given midi file
+    if continue_gen_midi is not None:
         tokens = tokenizer(continue_gen_midi)
         tokens = torch.tensor(tokens.ids).unsqueeze(0).to(device)
         print("[Loaded] Continuing generation from given midi file...")
+        
+    # 2.2. Continue from given sequence of tokens
+    elif continue_gen_tensor is not None:
+        tokens = continue_gen_tensor.to(device)
+        print("[Loaded] Continuing generation from given tensor...")
+        
+    # 2.3. Select a starting sequence randomly    
     else:
         tokens = first_six[randint(0, 19)].unsqueeze(0).to(device)
         
     
-    # 2.2. Create another tensor to concat all the tokens 
+    # 2.4. Create another tensor to concat all the tokens 
     # if we wanted to generate above the model's limit (512)
     total_tokens = tokens
     
-    # 2.3. The model's max_seq_len
+    # 2.5. The model's max_seq_len
     model_max_seq_len = model.positional_encoding.size(1)
     
     # 3. Start generating

@@ -2,7 +2,7 @@
 
 ![alt text](imgs/mozart.jpg)
 
-This project presents a **`PyTorch` implementation of a Transformer-based music generation pipeline** built around the **`REMI` tokenization** framework.  
+This project presents a **`PyTorch` implementation of a Transformer-based symbolic music generation pipeline** built around the **`REMI` tokenization** framework.
 
 It traces the full experimental journey, from the early, failed-but-instructive attempts (**Model 0** and **Model 1**) to the inaccurate yet valuable **Model 2**, and finally to the **Model 3** architecture, which delivers consistently strong and musically coherent results.
 
@@ -12,10 +12,22 @@ All earlier experiments are preserved in the **`Archived Models/`** directory to
 
 ## Quick summary
 
-- The pipeline processes `MIDI` files, tokenizes them with `REMI`, trains a custom `Transformer`, and generates MIDI output that can be rendered to WAV using FluidSynth and custom SoundFonts.
-- **Model 3** is the current best-performing model: it generates full multi-instrument compositions and the codebase for Model 3 is the cleanest and most organized.
-- To generate music just run `generate_music.ipynb` notebook in Model 3 folder.
-- You can here examples of generated music from the model at `Model 3/model_outputs` folder.
+- The pipeline processes `MIDI` files, tokenizes them with `REMI`, trains a custom `Transformer`, and generates new MIDI sequences that can be rendered to WAV using FluidSynth and custom SoundFonts.
+    
+- **Model 3** is the current best-performing model: it produces full multi-instrument compositions with strong structural coherence and musicality.
+    
+- The model can:
+	- **Generate music from scratch**.
+	- **Continue generation from an existing sequence**.
+	- **Extend a given MIDI file**.
+	- Future support planned for **continuing directly from WAV inputs**.
+    
+- The current training dataset includes:
+	- **182 Mozart MIDI files**.
+	- And upcoming versions will extend training to include **Beethoven** and **Tchaikovsky** for richer stylistic diversity.
+    
+- To generate music, simply run the `generate_music.ipynb` notebook in the **Model 3** folder.
+- You can hear examples of generated outputs in `Model 3/model_outputs/`.
 
 ---
 ## What's new in Model 3
@@ -28,8 +40,7 @@ All earlier experiments are preserved in the **`Archived Models/`** directory to
 - Dataset, dataloader, and model parameter shapes were chosen after multiple experiments to **balance output quality and training time**: an early experiment required *~200 hours per epoch*; current runs complete an epoch in *~1.5 hours*.
 - The dataset now uses **token IDs directly**, which simplifies training and avoided the manual token -> ID conversion that slowed Model 2.
 
->**Note:** Model 3 has only been trained for **2 epochs** so far and already produces highly coherent, musically rich results.  
-With further training, it’s expected to improve significantly in phrasing consistency, instrument blending, and long-term structure.
+>**Note:** Model 3 has only been trained for **3 epochs** on the *Mozart dataset* and has a stable **0.622 validation losses**.
 
 ---
 ## Project structure
