@@ -1,5 +1,91 @@
 ## Model comparison
 
+The old original idea was to make a chatbot where I can tell it the name of the symphony and how long I want it to be and optionally the bpm, and then the model would generate all of this.
+
+My train of thought was like this:
+	1. Create an encoder that takes these MIDI files and turs them to text and extract all the data needed (e.g. Name, bpm, instruments)
+	2. Use a pretrained model to be able to fill these data and finetune to learn and be able to generate music sequences like the one that the encoder created.
+	3. Once the model is done writing text like the ones the encoder created, this text out would then go to the decoder to convert the text back to audio
+
+> * The encoder and decoder where build from scratch.
+> * I quickly realized that the model being a chatbot is way too advanced so I just extracted the prompt manually.
+> * For a more detailed models comparison, view the *Archived Models* folder.
+### **Model 0**
+
+**Idea:**
+
+- Fine-tune GPT-2 (causal LM) using LoRA for efficient adaptation.
+- Represent MIDI data as flattened JSON-like sequences with BPM, instruments, and notes.
+- Add penalties in the loss function for repeated `REST` tokens.
+
+**Output:**
+
+- Generated sequences mostly filled with `REST` tokens and repetitive patterns.
+- If the input had multiple instruments, it would only generate a sequence in the first instrument and ignore the rest.
+
+**Observation:**
+
+- The used pretrained tokenizer only had normal vocabulary token not music tokens, that's why it only generated `REST` tokens, as it is a normal English word.
+- Tokenizer split music tokens incorrectly (e.g., `C4_q` → `C`, `4`, `q`).
+- Inputs became extremely long (>100k chars), making training unstable.
+- Approach unsuitable for structured symbolic data.
+
+---
+
+### **Model 1**
+
+**Idea:**
+
+- Switch to a seq2seq model (facebook-BART) for more controlled generation.
+- Build dataset with masked inputs and unmasked targets.
+- Add all musical notes to the tokenizer to preserve full tokens.
+- Apply custom loss to penalize non-music outputs.
+
+**Improvement over Model 0:**
+
+- Used a model better suited for structured sequence generation (seq2seq).
+- Fixed token fragmentation by expanding tokenizer vocabulary.
+- Split the dataset so that instead of really long lines, containing all the symphony in one line, to have a max of 20-30 tokens per line.
+- Used Masking to show the model where it needs to generate the music sequence (to fix the model only generating one instrument)
+
+**Output:**
+
+- Generated mostly non-music tokens and failed to maintain musical structure.
+
+**Observation:**
+
+- Masking strategy was too fragile and the model always found ways to overcome the loss penalty in the wrong ways.
+- Loss-based enforcement wasn’t enough to make the model follow structure.
+- Improved tokenizer helped preserve note tokens but didn’t solve sequence coherence.
+
+---
+
+### **Model 2**
+
+**Idea:**
+
+- Build a custom Transformer from scratch designed specifically for symbolic music (to avoid pre-learned non-music tokens).
+- Use **REMI tokenization** (Bar → Position → Pitch → Velocity → Duration) (avoids tokenizers with non-music tokens).
+- Add structural constraints in token order (because the REMI tokenizer splits the music note into multiple tokens for a smaller vocab size ) and a composite loss (cross-entropy + structural loss).
+- Apply training improvements: label smoothing, gradient clipping, LayerNorm before projection.
+
+**Improvement over Model 1:**
+
+- Designed architecture and tokenization tailored to the task.
+- Added explicit structure and stability mechanisms during training.
+
+**Output:**
+
+- Generated coherent piano pieces with consistent rhythm and melody.
+- The output only uses the piano (not other instruments), and is random.
+
+**Observation:**
+
+- Model successfully learned musical structure and produced normal music sequences.
+- Still limited in expressiveness and variation, but first fully working system.
+
+---
+
 | Model       | Type / approach                                | Key techniques attempted                                                                                                                                                                                                                                                                                                                                                                           | Strengths / what was learned                                                                                                                                                                                                                                                        | Outcome                                                                                                                                      |
 | ----------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Model 0** | GPT-2 Medium (causal LM) with LoRA fine-tuning | - Integrated **LoRA** for parameter-efficient adaptation<br>- Custom loss with penalties for repeated `REST` tokens<br>- Flattened JSON-like MIDI representation with BPM, instruments, notes                                                                                                                                                                                                      | - Hands-on experience extending GPT-2 vocab with domain-specific tokens<br>- Learned tokenizer limitations for symbolic data (splitting tokens like `C4_q` to C, 4, q)<br>- Practiced scaling LoRA to large pretrained models                                                       | ❌ Generation collapsed to mostly `REST`; tokenizer fragmentation and extremely long input lines (>100k chars) made this approach impractical |
