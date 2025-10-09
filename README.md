@@ -20,7 +20,6 @@ All earlier experiments are preserved in the **`Archived Models/`** directory to
 	- **Generate music from scratch**.
 	- **Continue generation from an existing sequence**.
 	- **Extend a given MIDI file**.
-	- Future support planned for **continuing directly from WAV inputs**.
     
 - The current training dataset includes:
 	- **182 Mozart MIDI files**.
