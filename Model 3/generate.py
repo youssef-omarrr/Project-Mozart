@@ -3,33 +3,7 @@ import torch.nn.functional as F
 from random import randint
 from tqdm import tqdm
 from miditok import TokSequence
-
-
-# These are the first 6 tokens of the first 20 midi files in the dataset 
-# to be our strating point given to the model
-# -----------------------------------------------------------------------
-first_six = torch.tensor(
-            [[4, 563, 190, 406, 426, 56],
-            [4, 563, 190, 400, 377, 190],
-            [4, 560, 190, 394, 468, 32],
-            [4, 563, 190, 407, 476, 22],
-            [4, 560, 190, 396, 476, 55],
-            [4, 561, 190, 410, 476, 22],
-            [4, 561, 190, 398, 373, 190],
-            [4, 563, 190, 405, 376, 363],
-            [4, 563, 190, 395, 377, 560],
-            [4, 563, 190, 411, 373, 206],
-            [4, 563, 190, 405, 377, 190],
-            [4, 563, 190, 405, 377, 190],
-            [4, 563, 190, 404, 375, 214],
-            [4, 563, 190, 407, 377, 190],
-            [4, 563, 190, 394, 474, 61],
-            [4, 560, 190, 408, 426, 56],
-            [4, 563, 190, 415, 426, 50],
-            [4, 563, 190, 406, 426, 22],
-            [4, 563, 190, 400, 426, 58],
-            [4, 557, 190, 402, 426, 60]])
-
+from data.starting_seq import first_six
 
 # Load model and tokenizer and generate data
 # -------------------------------------------
@@ -82,7 +56,7 @@ def generate_music(model,
         
     # 2.3. Select a starting sequence randomly    
     else:
-        tokens = first_six[randint(0, 19)].unsqueeze(0).to(device)
+        tokens = first_six[randint(0, 39)].unsqueeze(0).to(device)
         
     
     # 2.4. Create another tensor to concat all the tokens 

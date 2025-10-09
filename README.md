@@ -40,7 +40,10 @@ All earlier experiments are preserved in the **`Archived Models/`** directory to
 - Dataset, dataloader, and model parameter shapes were chosen after multiple experiments to **balance output quality and training time**: an early experiment required *~200 hours per epoch*; current runs complete an epoch in *~1.5 hours*.
 - The dataset now uses **token IDs directly**, which simplifies training and avoided the manual token -> ID conversion that slowed Model 2.
 
->**Note:** Model 3 has only been trained for **3 epochs** on the *Mozart dataset* and has a stable **0.622 validation losses**.
+>**Note:** Model 3 has been trained for:
+  - **3 epochs** on the *Mozart dataset* with a stable **0.622 validation losses**.
+  - **2 epochs** on the *Beethoven dataset* with a stable **0.861 validation losses**.
+  - **2 epochs** on the *Tchaikovsky dataset* with a stable **0.645 validation losses**.
 
 ---
 ## Project structure
