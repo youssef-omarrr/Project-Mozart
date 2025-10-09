@@ -28,6 +28,9 @@ All earlier experiments are preserved in the **`Archived Models/`** directory to
 - Dataset, dataloader, and model parameter shapes were chosen after multiple experiments to **balance output quality and training time**: an early experiment required *~200 hours per epoch*; current runs complete an epoch in *~1.5 hours*.
 - The dataset now uses **token IDs directly**, which simplifies training and avoided the manual token -> ID conversion that slowed Model 2.
 
+>**Note:** Model 3 has only been trained for **2 epochs** so far and already produces highly coherent, musically rich results.  
+With further training, it’s expected to improve significantly in phrasing consistency, instrument blending, and long-term structure.
+
 ---
 ## Project structure
 
