@@ -13,8 +13,8 @@ def generate_music(model,
                     continue_gen_tensor:torch.Tensor = None,
                     file_name:str = "Generated_Mozart",
                     max_new_tokens:int = 2048,
-                    temperature:float = 0.95,
-                    top_k:int = 10,
+                    temperature:float = 0.9,
+                    top_p:float = 0.9,
                     ):
     """
     Generate music tokens from ProjectMozart model and save MIDI/WAV outputs.
@@ -80,15 +80,9 @@ def generate_music(model,
             next_token = logits[:, -1, :]  # Take the last token only
             probs = F.softmax(next_token / temperature, dim=-1) # Apply temperature for more random results
             
-            # 6. Choose randomly from the top_k probs
-            if top_k:
-                # keep only top_k tokens
-                top_probs, top_idx = torch.topk(probs, top_k) 
-                # normalize
-                top_probs = top_probs/torch.sum(top_probs) 
-                # take one sample token from the top_k probability distribution.
-                next_token = torch.multinomial(top_probs, 1)
-                next_token = top_idx.gather(-1, next_token)
+            # 6. Choose randomly from the top_p 
+            if top_p:
+                next_token = sample_from_top_p(probs, top_p=top_p)
             else:
                 # only sample the highest prob (greedy decoding)
                 next_token = torch.argmax(probs, dim=-1, keepdim=True)
@@ -124,6 +118,40 @@ def generate_music(model,
 # ------------------------------------------------------------ #
 # ==========  HELPER FUNCTIONS  ============================== #
 # ------------------------------------------------------------ #
+
+# nucleus sampling (top-p)
+# -------------------------
+
+def sample_from_top_p(probs, top_p=0.9):
+    """
+    Previously top_k was used, but now it is improved to top_p.
+    
+    Instead of always picking from the top-k most likely next tokens,
+    nucleus sampling dynamically picks from the smallest possible set of tokens
+    whose cumulative probability mass ≥ p (e.g., 0.9).
+    """
+    
+    # 1. Sort tokens by their probability
+    sorted_probs, sorted_idx = torch.sort(probs, descending=True)
+    # 2. Compute cumulative probabilities
+    cum_probs = torch.cumsum(sorted_probs, dim=-1)
+    
+    # 3. Remove tokens beyond the top-p threshold
+    sorted_mask = cum_probs <= top_p
+    # Always keep at least 1 token
+    sorted_mask[..., 0] = True  
+    
+    # 4. Renormalize probabilities
+    filtered_probs = sorted_probs * sorted_mask
+    filtered_probs = filtered_probs / filtered_probs.sum(dim=-1, keepdim=True)
+    
+    # 5. Randomly sample one token from this nucleus
+    sampled_index = torch.multinomial(filtered_probs, 1)
+    
+    # 6. Map back to the original indices
+    return sorted_idx.gather(-1, sampled_index)
+
+
 
 import os
 import subprocess
@@ -165,7 +193,7 @@ def midi_to_wav(
     soundfont_path="../soundfonts/AegeanSymphonicOrchestra-SND.sf2",
     output_dir="model_outputs/wav_files/",
     output_name=None,
-    sample_rate=44100,
+    sample_rate=48000,
     gain=3.0,
     normalize=True,
     fluidsynth_path=r"C:\tools\fluidsynth\bin\fluidsynth.exe",
@@ -195,6 +223,8 @@ def midi_to_wav(
         "-F", output_wav,
         "-ni", soundfont_path,
         "-r", str(sample_rate),
+        "-z", "1024",
+        "-C5", "-R5",   # soft reverb & chorus
         "-g", str(gain),
         midi_path,
     ]
