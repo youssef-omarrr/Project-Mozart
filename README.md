@@ -23,7 +23,7 @@ All earlier experiments are preserved in the **`Archived Models/`** directory to
     
 - The current training dataset includes:
 	- **182 Mozart MIDI files**.
-	- **88 Beethoven MIDI files**.
+	- **83 Beethoven MIDI files**.
 	- **92 Tchaikovsky MIDI files**.
     
 - To generate music, simply run the `generate_music.ipynb` notebook in the **Model 3** folder.
@@ -73,3 +73,6 @@ All earlier experiments are preserved in the **`Archived Models/`** directory to
 
 ---
 
+## Future Work:
+- [ ] Try more composers.
+- [ ] Try to fine tune the model for less hallusination and even cleanier output everytime (now it produces one really good symphony every 2 tries).

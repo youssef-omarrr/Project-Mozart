@@ -14,7 +14,7 @@ def generate_music(model,
                     file_name:str = "Generated_Mozart",
                     max_new_tokens:int = 2048,
                     temperature:float = 0.95,
-                    top_k:int = 20,
+                    top_k:int = 10,
                     ):
     """
     Generate music tokens from ProjectMozart model and save MIDI/WAV outputs.
